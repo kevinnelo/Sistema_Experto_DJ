@@ -1,0 +1,24 @@
+flowchart TD
+  raiz["¿Qué género suena y cómo reacciona el público?<br/><i>genero_actual, reaccion_publico y momento</i>"]
+  raiz --> g1["Infantil"]
+  raiz --> g2["Pop o música urbana"]
+  raiz --> g3["Salsa o merengue"]
+  raiz --> g4["Electrónica o rock"]
+  raiz --> g5["Popular o vallenato"]
+  g1 -->|"reacción positiva"| r18["<b>R18</b><br/>Mantener el género:<br/>canción candidata infantil"]
+  g1 -->|"ríe y canta"| r23["<b>R23</b><br/>Canción más conocida<br/>del mismo género"]
+  g2 -->|"baila y canta"| r19["<b>R19</b><br/>Mantener género y<br/>nivel de energía"]
+  g2 -->|"reacción negativa"| r24["<b>R24</b><br/>Consultar preferencias<br/>antes de cambiar"]
+  g3 -->|"baila poco"| r20["<b>R20</b><br/>Aumentar la energía<br/>gradualmente"]
+  g3 -->|"sin reacción"| r25["<b>R25</b><br/>Consultar la causa y<br/>buscar otra canción"]
+  g4 -->|"permanece sentado"| r21["<b>R21</b><br/>Disminuir la energía o<br/>canción comercial"]
+  g5 -->|"solicita otro género"| r22["<b>R22</b><br/>Confirmar y cambiar<br/>el género"]
+  raiz --> g6["Cualquier género:<br/>el público se está retirando"]
+  g6 -->|"momento = cierre"| r26["<b>R26</b><br/>Disminuir la energía:<br/>canciones de despedida"]
+  g6 -->|"antes del cierre"| r27["<b>R27</b><br/>Consultar el motivo<br/>de la salida"]
+  raiz -.->|"cualquier otra combinación"| nada["Ninguna regla de género y reacción.<br/>Solo aplican R01–R17<br/>(tipo, momento y edad)"]
+  classDef q fill:#f6b3b9,stroke:#8a5a66,color:#1c2b3a;
+  classDef g fill:#dfe8f7,stroke:#6c7f99,color:#1c2b3a;
+  classDef r fill:#dcecdc,stroke:#6c8f72,color:#1c2b3a;
+  classDef n fill:#fdeccb,stroke:#9b8a5e,color:#1c2b3a;
+  class raiz q; class g1,g2,g3,g4,g5,g6 g; class r18,r19,r20,r21,r22,r23,r24,r25,r26,r27 r; class nada n;

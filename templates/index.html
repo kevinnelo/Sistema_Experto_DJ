@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DJ Expert · Sistema experto</title><link rel="stylesheet" href="/static/styles.css"></head>
+<body><div class="shell">
+<aside class="sidebar"><div class="brand"><span class="logo">♫</span><div>DJ <b>EXPERT</b><small> SISTEMA EXPERTO</small></div></div>
+<div class="sideheading">ESPACIO DE TRABAJO</div><div class="nav active">◈ &nbsp; Asistente de sesión</div><div class="nav">⌁ &nbsp; Reglas R01–R27</div>
+<div class="sidefooter"><span class="dot"></span> Motor Python conectado<br><small>Flask · SQLite · reglas del documento</small></div></aside>
+<main>
+<header><div><span class="eyebrow">SISTEMA EXPERTO PARA DJ</span><h1>Decide la <em>siguiente canción.</em></h1>
+<p>Registra tu catálogo, abre el evento e indica el contexto y la canción que suena. Las reglas del documento proponen canciones concretas; tú decides si las aceptas, las rechazas o las cambias. Todo queda guardado en el historial del evento.</p></div>
+<div class="python">PY <span>Powered by Python</span></div></header>
+<p id="error" class="conflict" role="alert" hidden></p>
+<div class="workspace">
+<section class="panel">
+  <div class="paneltop"><div><h2>DJ y evento</h2><p>RF02: quién pincha y en qué fiesta</p></div><span class="step">01 / 04</span></div>
+  <form id="formDJ" class="fields">
+    <div class="grid2">
+      <div class="field"><label for="djNombre">Nombre del DJ</label><input id="djNombre" name="nombre" required maxlength="120" autocomplete="name"></div>
+      <div class="field"><label for="djCorreo">Correo</label><input id="djCorreo" name="correo" type="email" required maxlength="160" autocomplete="email"></div>
+    </div>
+    <div class="actions"><button class="outline" type="submit">Entrar</button></div>
+  </form>
+  <div id="zonaEvento" hidden>
+    <p id="djActual" class="muted"></p>
+    <div class="field"><label for="evento">Evento activo</label><select id="evento"><option value="">Selecciona o crea un evento…</option></select></div>
+    <form id="formEvento" class="fields nuevo">
+      <div class="field"><label for="evNombre">Nuevo evento</label><input id="evNombre" name="nombre" required maxlength="200" placeholder="Nombre del evento"></div>
+      <div class="grid2">
+        <div class="field"><label for="evTipo">Tipo de evento</label><select id="evTipo" name="tipo_evento" required></select></div>
+        <div class="field"><label for="evDuracion">Duración (min)</label><input id="evDuracion" name="duracion_min" type="number" min="1" value="240" required></div>
+      </div>
+      <div class="actions"><button class="outline" type="submit">+ Crear evento</button><button class="secondary" type="button" id="finalizar" disabled>Finalizar evento</button></div>
+    </form>
+  </div>
+</section>
+<section class="panel">
+  <div class="paneltop"><div><h2>Contexto del evento</h2><p>Variables de las reglas R01–R27</p></div><span class="step">02 / 04</span></div>
+  <p id="tipoEvento" class="muted">El tipo de evento se toma del evento activo.</p>
+  <form id="form"><div id="fields" class="fields"><p>Cargando base de conocimiento…</p></div>
+  <div class="field"><label for="actual">Canción que suena ahora</label><select id="actual"><option value="">Ninguna (sin compatibilidad ni transición)</option></select></div>
+  <div class="actions"><button class="secondary" type="reset" id="resetCtx">Restablecer</button><button class="primary" type="submit" id="run" disabled>✦ &nbsp; Recomendar</button></div></form>
+  <p class="muted">Las variables sin responder no disparan las reglas que las necesitan. Cada consulta guarda una fotografía nueva del contexto.</p>
+</section>
+</div>
+<section class="panel full">
+  <div class="paneltop"><div><h2>Catálogo del DJ</h2><p>RF01: canciones con BPM, tonalidad, energía y si son conocidas o comerciales</p></div><span class="step">03 / 04</span></div>
+  <form id="formCancion" class="fields">
+    <div class="grid4">
+      <div class="field"><label for="titulo">Título</label><input id="titulo" name="titulo" required maxlength="200"></div>
+      <div class="field"><label for="artista">Artista</label><input id="artista" name="artista" required maxlength="200"></div>
+      <div class="field"><label for="genero">Género</label><select name="genero" id="genero" required></select></div>
+      <div class="field"><label for="formato">Formato</label><select name="formato" id="formato" required></select></div>
+      <div class="field"><label for="bpm">BPM (40–250)</label><input id="bpm" name="bpm" type="number" step="0.01" min="40" max="250" required></div>
+      <div class="field"><label for="camelot">Camelot (1A–12B)</label><input id="camelot" name="tonalidad_camelot" required pattern="^(1[0-2]|[1-9])[ABab]$" placeholder="8A"></div>
+      <div class="field"><label for="energia">Energía (1–10)</label><input id="energia" name="energia" type="number" min="1" max="10" required></div>
+      <div class="field"><label for="duracion">Duración (seg)</label><input id="duracion" name="duracion_seg" type="number" min="1" required></div>
+    </div>
+    <div class="checks">
+      <span class="check"><input id="conocida" name="conocida" type="checkbox"><label for="conocida">Conocida: el público la reconoce y la canta</label></span>
+      <span class="check"><input id="comercial" name="comercial" type="checkbox"><label for="comercial">Comercial: éxito de radio o de listas</label></span>
+    </div>
+    <div class="actions"><button class="outline" type="submit" id="agregar" disabled>+ Agregar canción</button></div>
+  </form>
+  <div id="catalogo" class="catalogo"></div>
+</section>
+<section class="panel full">
+  <div class="paneltop"><div><h2>Recomendaciones</h2><p>Reglas disparadas, conflictos, canciones propuestas y explicación</p></div><span class="step">04 / 04</span></div>
+  <div id="empty" class="empty"><div class="disc">♫</div><h3>Aún no hay recomendación</h3><p>Abre un evento, completa el contexto y presiona «Recomendar».</p></div>
+  <div id="results" hidden>
+    <h3 class="rankingtitle">Reglas disparadas</h3><div id="reglas"></div>
+    <div id="conflictos"></div>
+    <div id="recs"></div>
+    <p id="aviso" class="muted"></p>
+  </div>
+  <h3 class="rankingtitle">Historial de decisiones del evento (RF05)</h3>
+  <div id="historial" class="muted">Aún no hay decisiones en este evento.</div>
+  <div class="resultactions"><button class="outline" id="download" type="button">↓ Descargar historial JSON</button></div>
+</section>
+</main></div>
+<script src="/static/script.js"></script></body></html>

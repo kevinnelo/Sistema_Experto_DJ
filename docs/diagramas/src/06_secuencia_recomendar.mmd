@@ -1,0 +1,36 @@
+sequenceDiagram
+  autonumber
+  actor DJ
+  participant W as Web (script.js)
+  participant A as app.py (Flask)
+  participant S as ServicioSesion
+  participant M as MotorDJ
+  participant D as DAO
+  participant B as SQLite
+  DJ->>W: contexto + canción que suena
+  W->>A: POST /api/eventos/{id}/recomendar
+  A->>S: recomendar(evento_id, contexto, cancion_actual_id)
+  S->>B: BEGIN IMMEDIATE
+  S->>D: EventoDAO.obtener · CancionDAO.listar
+  D-->>S: evento (tipo) y catálogo del DJ
+  S->>M: recomendar(hechos, catálogo, canción actual)
+  M->>M: validar · disparar reglas · conflictos
+  M->>M: seleccionar canciones · técnicas · explicación
+  M-->>S: reglas, conflictos y recomendaciones
+  S->>D: ContextoDAO.registrar
+  S->>D: RecomendacionDAO.crear (por cada acción)
+  D->>B: INSERT contexto_evento, recomendacion,<br/>recomendacion_regla, recomendacion_transicion
+  alt todo correcto
+    S->>B: COMMIT
+    S-->>A: resultado con ids guardados
+    A-->>W: 200 JSON
+    W-->>DJ: reglas, conflictos, canción sugerida y explicación
+  else error de validación o de integridad
+    S->>B: ROLLBACK
+    A-->>W: 400 / 404 / 409 con el motivo
+  end
+  DJ->>W: aceptar, rechazar o modificar
+  W->>A: POST /api/recomendaciones/{id}/decision
+  A->>S: decidir(...)
+  S->>D: DecisionDAO.registrar (en transacción)
+  W-->>DJ: historial actualizado · la canción elegida pasa a ser la actual

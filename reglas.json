@@ -1,0 +1,83 @@
+{
+  "_fuente": "Documento 'Sistema experto DJ': variables, reglas R01-R27, parámetros, técnicas y transiciones. No contiene pesos ni probabilidades. Versión 2: valor se_retira con R26 y R27, parámetro energia_diferencia_mismo_nivel, caso BPM_TOLERABLE y acción BAJAR_O_COMERCIAL para R21.",
+  "variables": {
+    "tipo_evento": {"descripcion": "Tipo de evento o fiesta contratada", "valores": {
+      "cumpleanos": "Cumpleaños", "boda": "Boda", "empresarial": "Fiesta empresarial",
+      "tematica": "Fiesta temática", "discoteca": "Discoteca", "reunion_familiar": "Reunión familiar"}},
+    "momento": {"descripcion": "Momento de la fiesta", "valores": {
+      "llegada": "Llegada de los invitados", "inicio": "Inicio de la fiesta",
+      "desarrollo": "Desarrollo de la fiesta", "momento_principal": "Momento principal",
+      "cierre": "Cierre de la fiesta"}},
+    "grupo_edad": {"descripcion": "Edad predominante del público", "valores": {
+      "ninos": "Niños", "adolescentes": "Adolescentes", "jovenes": "Jóvenes", "adultos": "Adultos",
+      "adultos_mayores": "Adultos mayores", "variadas": "Edades variadas"}},
+    "genero_actual": {"descripcion": "Género musical que suena o se solicita", "valores": {
+      "infantil": "Infantil", "pop": "Pop", "urbano": "Música urbana", "salsa": "Salsa",
+      "merengue": "Merengue", "electronica": "Electrónica", "rock": "Rock",
+      "popular": "Música popular", "vallenato": "Vallenato"}},
+    "reaccion_publico": {"descripcion": "Reacción observada en el público", "valores": {
+      "positiva": "Reacción positiva", "negativa": "Reacción negativa", "baila_y_canta": "Baila y canta",
+      "baila_poco": "Baila poco", "sentado": "Permanece sentado", "rie_y_canta": "Ríe y canta",
+      "solicita_otro_genero": "Solicita otro género", "sin_reaccion": "Sin reacción",
+      "se_retira": "Se está retirando"}}
+  },
+  "generos": {
+    "Infantil": "infantil", "Pop": "pop", "Urbano": "urbano", "Salsa": "salsa", "Merengue": "merengue",
+    "Electrónica": "electronica", "Rock": "rock", "Popular": "popular", "Vallenato": "vallenato"
+  },
+  "parametros": {
+    "bpm_diferencia_tolerada": {"valor": 10, "unidad": "BPM", "descripcion": "Diferencia de BPM considerada aceptable entre canciones"},
+    "bpm_diferencia_mezcla_similar": {"valor": 5, "unidad": "BPM", "descripcion": "Diferencia máxima para tratar dos canciones como de BPM similares"},
+    "camelot_distancia_maxima": {"valor": 3, "unidad": "posiciones", "descripcion": "Distancia máxima en la rueda de Camelot para considerar tonalidades compatibles"},
+    "energia_diferencia_mismo_nivel": {"valor": 1, "unidad": "puntos", "descripcion": "Diferencia máxima de energía (escala 1-10) para considerar que dos canciones mantienen el mismo nivel"}
+  },
+  "tecnicas": {
+    "SYNC_BPM": {"nombre": "Sincronización de BPM", "descripcion": "Se aplica siempre para que la fiesta no se sienta detenida."},
+    "CROSSFADE": {"nombre": "Cross-fade out", "descripcion": "Transición suave cuando las canciones tienen BPM similares."},
+    "MEZCLA_SIMPLE": {"nombre": "Mezcla sencilla", "descripcion": "Mezcla tradicional cuando las canciones tienen BPM similares."},
+    "ECHO_OUT": {"nombre": "Echo out", "descripcion": "Al cambiar de canción o para dar un efecto de impacto dentro de la misma canción."},
+    "AJUSTE_TEMPO": {"nombre": "Igualar BPM con ajuste de tempo", "descripcion": "Cuando los BPM son muy diferentes, se iguala el tempo procurando que la mezcla no suene forzada."},
+    "CORTE_DIRECTO": {"nombre": "Corte directo", "descripcion": "Al cambiar de género o para anunciar algo por micrófono."}
+  },
+  "transicion_reglas": [
+    {"caso": "SIEMPRE", "tecnica": "SYNC_BPM", "prioridad": 1},
+    {"caso": "BPM_SIMILAR", "tecnica": "CROSSFADE", "prioridad": 1},
+    {"caso": "BPM_SIMILAR", "tecnica": "MEZCLA_SIMPLE", "prioridad": 2},
+    {"caso": "CAMBIO_CANCION", "tecnica": "ECHO_OUT", "prioridad": 1},
+    {"caso": "EFECTO_IMPACTO", "tecnica": "ECHO_OUT", "prioridad": 1},
+    {"caso": "BPM_TOLERABLE", "tecnica": "AJUSTE_TEMPO", "prioridad": 1},
+    {"caso": "BPM_TOLERABLE", "tecnica": "CROSSFADE", "prioridad": 2},
+    {"caso": "BPM_DISTINTO", "tecnica": "AJUSTE_TEMPO", "prioridad": 1},
+    {"caso": "CAMBIO_GENERO", "tecnica": "CORTE_DIRECTO", "prioridad": 1},
+    {"caso": "ANUNCIO_MICROFONO", "tecnica": "CORTE_DIRECTO", "prioridad": 1}
+  ],
+  "reglas": [
+    {"codigo": "R01", "nombre": "Cumpleaños", "conclusion": "Recomendar canciones festivas y alegres apropiadas para cumpleaños", "accion": "CRITERIO", "descripcion": "SI el tipo de fiesta es un cumpleaños, ENTONCES recomendar música festiva y reconocida, considerando los gustos de la persona homenajeada.", "condiciones": {"tipo_evento": ["cumpleanos"]}},
+    {"codigo": "R02", "nombre": "Boda", "conclusion": "Recomendar música romántica, alegre y elegante para bodas", "accion": "CRITERIO", "descripcion": "SI el tipo de fiesta es una boda, ENTONCES recomendar música apropiada para cada momento de la celebración, respetando las preferencias de la pareja.", "condiciones": {"tipo_evento": ["boda"]}},
+    {"codigo": "R03", "nombre": "Fiesta empresarial", "conclusion": "Recomendar música moderna y moderada para empresas", "accion": "CRITERIO", "descripcion": "SI el tipo de fiesta es empresarial, ENTONCES recomendar música adecuada para el ambiente laboral y social, considerando las indicaciones del evento.", "condiciones": {"tipo_evento": ["empresarial"]}},
+    {"codigo": "R04", "nombre": "Fiesta temática", "conclusion": "Recomendar música acorde con la temática elegida", "accion": "CRITERIO", "descripcion": "SI el tipo de fiesta es temática, ENTONCES recomendar música relacionada con la temática acordada.", "condiciones": {"tipo_evento": ["tematica"]}},
+    {"codigo": "R05", "nombre": "Discoteca", "conclusion": "Recomendar música bailable y de alta energía", "accion": "CRITERIO", "descripcion": "SI el evento se realiza en una discoteca, ENTONCES recomendar repertorio orientado al baile, considerando el estilo del lugar y los gustos del público.", "condiciones": {"tipo_evento": ["discoteca"]}},
+    {"codigo": "R06", "nombre": "Reunión familiar", "conclusion": "Recomendar música familiar y canciones para todas las edades", "accion": "CRITERIO", "descripcion": "SI el tipo de evento es una reunión familiar, ENTONCES recomendar música variada y compartida entre los asistentes, favoreciendo la participación de diferentes grupos.", "condiciones": {"tipo_evento": ["reunion_familiar"]}},
+    {"codigo": "R07", "nombre": "Llegada de invitados", "conclusion": "Recomendar música suave de fondo y de bienvenida", "accion": "CRITERIO", "descripcion": "SI los invitados están llegando, ENTONCES recomendar música agradable y de energía moderada que facilite la bienvenida y la conversación.", "condiciones": {"momento": ["llegada"]}},
+    {"codigo": "R08", "nombre": "Inicio de la fiesta", "conclusion": "Recomendar música animada para romper el hielo", "accion": "CRITERIO", "descripcion": "SI la fiesta está comenzando, ENTONCES recomendar música animada con un aumento gradual de energía, invitando a participar sin forzar el baile.", "condiciones": {"momento": ["inicio"]}},
+    {"codigo": "R09", "nombre": "Desarrollo de la fiesta", "conclusion": "Recomendar música bailable manteniendo un ritmo constante", "accion": "CRITERIO", "descripcion": "SI la fiesta está en desarrollo, ENTONCES recomendar música con una energía acorde con la actividad y la participación del público, manteniendo continuidad y permitiendo pausas.", "condiciones": {"momento": ["desarrollo"]}},
+    {"codigo": "R10", "nombre": "Momento principal", "conclusion": "Recomendar música de máxima energía y canciones reconocidas o en tendencia", "accion": "SUBIR_ENERGIA", "descripcion": "SI la fiesta está en su momento principal, ENTONCES recomendar música más animada cuando corresponda a la actividad prevista, destacando el momento de celebración.", "condiciones": {"momento": ["momento_principal"]}},
+    {"codigo": "R11", "nombre": "Cierre de la fiesta", "conclusion": "Recomendar música relajante o canciones de despedida", "accion": "BAJAR_ENERGIA", "descripcion": "SI la fiesta está llegando a su cierre, ENTONCES recomendar canciones de despedida con una disminución gradual de energía.", "condiciones": {"momento": ["cierre"]}},
+    {"codigo": "R12", "nombre": "Público infantil", "conclusion": "Recomendar música infantil y canciones muy alegres", "accion": "CRITERIO", "descripcion": "SI predominan niños, ENTONCES recomendar canciones apropiadas para su edad, gustos y actividad, comprobando el contenido y las preferencias.", "condiciones": {"grupo_edad": ["ninos"]}},
+    {"codigo": "R13", "nombre": "Público adolescente", "conclusion": "Recomendar música juvenil actual o en tendencia", "accion": "CRITERIO", "descripcion": "SI predominan adolescentes, ENTONCES recomendar canciones reconocidas por ese público y apropiadas para el evento, considerando sus solicitudes y gustos.", "condiciones": {"grupo_edad": ["adolescentes"]}},
+    {"codigo": "R14", "nombre": "Público joven", "conclusion": "Recomendar música urbana, electrónica comercial o canciones populares", "accion": "CRITERIO", "descripcion": "SI predominan jóvenes, ENTONCES recomendar repertorio familiar para el grupo, actual o de otras épocas, confirmando sus preferencias sin presuponer un género.", "condiciones": {"grupo_edad": ["jovenes"]}},
+    {"codigo": "R15", "nombre": "Público adulto", "conclusion": "Recomendar música de los ochenta y noventa y pop", "accion": "CRITERIO", "descripcion": "SI predominan adultos, ENTONCES recomendar canciones reconocidas según sus gustos reales, combinando épocas si el público lo desea.", "condiciones": {"grupo_edad": ["adultos"]}},
+    {"codigo": "R16", "nombre": "Público adulto mayor", "conclusion": "Recomendar música tradicional y baladas clásicas", "accion": "CRITERIO", "descripcion": "SI predominan adultos mayores, ENTONCES recomendar repertorio clásico o actual según sus preferencias, considerando sus gustos y comodidad.", "condiciones": {"grupo_edad": ["adultos_mayores"]}},
+    {"codigo": "R17", "nombre": "Edades variadas", "conclusion": "Recomendar música variada y éxitos generacionales", "accion": "CRITERIO", "descripcion": "SI el público está compuesto por personas de edades variadas, ENTONCES recomendar repertorio diverso y canciones compartidas, alternando opciones para distintos grupos.", "condiciones": {"grupo_edad": ["variadas"]}},
+    {"codigo": "R18", "nombre": "Infantil con reacción positiva", "conclusion": "Mantener el género musical", "accion": "MANTENER_GENERO", "descripcion": "SI el género actual es infantil y la reacción del público es positiva, ENTONCES recomendar una canción candidata de ese género, considerando el tipo de evento, el momento y las características del público, sin reproducirla todavía.", "condiciones": {"genero_actual": ["infantil"], "reaccion_publico": ["positiva"]}},
+    {"codigo": "R19", "nombre": "Pop/urbano con baile y canto", "conclusion": "Mantener el nivel de energía", "accion": "MANTENER_ENERGIA", "descripcion": "SI el género actual es pop o urbano y el público baila y canta, ENTONCES recomendar mantener el género y el nivel de energía mientras el contexto continúe igual, seleccionando una canción de continuidad.", "condiciones": {"genero_actual": ["pop", "urbano"], "reaccion_publico": ["baila_y_canta"]}},
+    {"codigo": "R20", "nombre": "Salsa/merengue con poco baile", "conclusion": "Aumentar la energía musical", "accion": "SUBIR_ENERGIA", "descripcion": "SI el género actual es salsa o merengue y el público baila poco, ENTONCES recomendar aumentar gradualmente la energía solo cuando la actividad esté orientada al baile y el público desee participar; en una etapa tranquila, mantener la energía apropiada.", "condiciones": {"genero_actual": ["salsa", "merengue"], "reaccion_publico": ["baila_poco"]}},
+    {"codigo": "R21", "nombre": "Electrónica/rock con público sentado", "conclusion": "Disminuir la energía o seleccionar canciones más comerciales", "accion": "BAJAR_O_COMERCIAL", "descripcion": "SI el género actual es electrónica o rock y el público permanece sentado, ENTONCES considerar si conversa, come o descansa antes de cambiar; si desea bailar, recomendar una canción más conocida y consultar sus preferencias si hay dudas.", "condiciones": {"genero_actual": ["electronica", "rock"], "reaccion_publico": ["sentado"]}},
+    {"codigo": "R22", "nombre": "Solicitud de otro género", "conclusion": "Cambiar el género musical", "accion": "CAMBIAR_GENERO", "descripcion": "SI el género actual es popular o vallenato y el público solicita otro género, ENTONCES confirmar cuál desea escuchar y recomendar una canción de ese género si resulta apropiada; de lo contrario, acordar una alternativa.", "condiciones": {"genero_actual": ["popular", "vallenato"], "reaccion_publico": ["solicita_otro_genero"]}},
+    {"codigo": "R23", "nombre": "Infantil con risas y canto", "conclusion": "Recomendar una canción más conocida del mismo género", "accion": "MISMO_GENERO", "descripcion": "SI el género actual es infantil y el público ríe y canta, ENTONCES recomendar una canción más conocida del mismo género.", "condiciones": {"genero_actual": ["infantil"], "reaccion_publico": ["rie_y_canta"]}},
+    {"codigo": "R24", "nombre": "Pop/urbano con reacción negativa", "conclusion": "Consultar las preferencias musicales del público", "accion": "CONSULTAR", "descripcion": "SI el género actual es pop o urbano y la reacción del público es negativa, ENTONCES consultar las preferencias musicales antes de modificar la selección.", "condiciones": {"genero_actual": ["pop", "urbano"], "reaccion_publico": ["negativa"]}},
+    {"codigo": "R25", "nombre": "Salsa/merengue sin reacción", "conclusion": "Buscar y recomendar otra canción", "accion": "BUSCAR_OTRA", "descripcion": "SI el género actual es salsa o merengue y el público no reacciona, ENTONCES consultar la causa antes de modificar la selección; si rechaza la canción, buscar otra, y si pide menos intensidad, disminuir la energía.", "condiciones": {"genero_actual": ["salsa", "merengue"], "reaccion_publico": ["sin_reaccion"]}},
+    {"codigo": "R26", "nombre": "Público se retira en el cierre", "conclusion": "Disminuir la energía con canciones de despedida", "accion": "BAJAR_ENERGIA", "descripcion": "SI la fiesta está en su cierre y el público se está retirando, ENTONCES recomendar disminuir la energía y utilizar canciones de despedida.", "condiciones": {"momento": ["cierre"], "reaccion_publico": ["se_retira"]}},
+    {"codigo": "R27", "nombre": "Público se retira antes del cierre", "conclusion": "Consultar el motivo de la salida antes de cambiar la música", "accion": "CONSULTAR", "descripcion": "SI el evento continúa (llegada, inicio, desarrollo o momento principal) y el público se está retirando, ENTONCES consultar el motivo sin atribuir la salida automáticamente a la música.", "condiciones": {"momento": ["llegada", "inicio", "desarrollo", "momento_principal"], "reaccion_publico": ["se_retira"]}}
+  ]
+}

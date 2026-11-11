@@ -1,0 +1,80 @@
+[
+ {
+  "id": "a",
+  "titulo": "Tema A",
+  "artista": "Orquesta Uno",
+  "genero": "Salsa",
+  "bpm": 124,
+  "tonalidad_camelot": "8A",
+  "energia": 5,
+  "duracion_seg": 210,
+  "formato": "MP3",
+  "conocida": false,
+  "comercial": false
+ },
+ {
+  "id": "b",
+  "titulo": "Tema B",
+  "artista": "Orquesta Uno",
+  "genero": "Salsa",
+  "bpm": 120,
+  "tonalidad_camelot": "9A",
+  "energia": 7,
+  "duracion_seg": 225,
+  "formato": "MP3",
+  "conocida": true,
+  "comercial": false
+ },
+ {
+  "id": "c",
+  "titulo": "Tema C",
+  "artista": "Grupo Dos",
+  "genero": "Merengue",
+  "bpm": 131,
+  "tonalidad_camelot": "2B",
+  "energia": 9,
+  "duracion_seg": 198,
+  "formato": "MP3",
+  "conocida": false,
+  "comercial": false
+ },
+ {
+  "id": "d",
+  "titulo": "Tema D",
+  "artista": "Orquesta Tres",
+  "genero": "Salsa",
+  "bpm": 118,
+  "tonalidad_camelot": "7A",
+  "energia": 3,
+  "duracion_seg": 240,
+  "formato": "MP3",
+  "conocida": true,
+  "comercial": false
+ },
+ {
+  "id": "e",
+  "titulo": "Tema E",
+  "artista": "Solista Cuatro",
+  "genero": "Pop",
+  "bpm": 126,
+  "tonalidad_camelot": "8B",
+  "energia": 4,
+  "duracion_seg": 202,
+  "formato": "MP3",
+  "conocida": false,
+  "comercial": true
+ },
+ {
+  "id": "f",
+  "titulo": "Tema F",
+  "artista": "Grupo Dos",
+  "genero": "Merengue",
+  "bpm": 135,
+  "tonalidad_camelot": "10A",
+  "energia": 8,
+  "duracion_seg": 187,
+  "formato": "MP3",
+  "conocida": false,
+  "comercial": false
+ }
+]

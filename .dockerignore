@@ -1,0 +1,10 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.db
+*.sqlite*
+traza.json
+.env
+*.db-wal
+*.db-shm
