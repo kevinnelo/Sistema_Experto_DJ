@@ -2,9 +2,8 @@
 .venv
 __pycache__
 *.pyc
-*.db
-*.sqlite*
-traza.json
 .env
-*.db-wal
-*.db-shm
+.clave_sesion
+_respaldo_original
+tests
+docs

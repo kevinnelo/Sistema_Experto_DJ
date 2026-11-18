@@ -13,18 +13,20 @@ Qué hace, y solo lo que define el documento:
 4. Asigna técnicas de transición según el caso de BPM (transicion_regla).
 5. Redacta la explicación de cada recomendación: hechos, reglas, filtro y técnicas (RF04).
 
-ServicioSesion reúne los procesos transaccionales (catálogo, evento, contexto,
-recomendación y decisión). Cada proceso se ejecuta en una sola transacción y guarda
+ServicioSesion reúne los procesos transaccionales (cuenta, catálogo, evento, contexto,
+recomendación, decisión e historial). Cada proceso se ejecuta en una sola transacción y guarda
 su resultado en las tablas del modelo del documento a través de los DAO de datos.py.
 """
 import json
 import re
-import sqlite3
 import time
 from datetime import datetime, timezone
 
-from datos import (CancionDAO, ConocimientoDAO, ContextoDAO, DecisionDAO, EventoDAO,
+from werkzeug.security import check_password_hash, generate_password_hash
+
+from datos import (CancionDAO, ConocimientoDAO, ContextoDAO, DecisionDAO, ErrorIntegridad, EventoDAO,
                    RecomendacionDAO, UsuarioDAO, VARIABLES_CONTEXTO)
+from ejemplos import CANCIONES_EJEMPLO, CASOS_EJEMPLO, PREFIJO_EJEMPLO
 
 CAMPOS_CONTEXTO = ("tipo_evento", "momento", "grupo_edad", "genero_actual", "reaccion_publico")
 FORMATOS = ("MP3", "WAV", "FLAC")
@@ -40,6 +42,10 @@ CORREO = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 class ErrorNoEncontrado(LookupError):
     """El usuario, evento, canción o recomendación indicado no existe."""
+
+
+class ErrorCredenciales(Exception):
+    """Correo o contraseña incorrectos."""
 
 
 class ErrorConflicto(Exception):
@@ -273,7 +279,7 @@ class MotorDJ:
         return " ".join(partes)
 
     # ------------------------------------------------------------------ recomendación
-    def recomendar(self, contexto, catalogo, cancion_actual_id=None):
+    def recomendar(self, contexto, catalogo, cancion_actual_id=None, aclaraciones=None):
         """Aplica las reglas al contexto y propone canciones del catálogo.
 
         Devuelve reglas disparadas, conflictos, una recomendación por acción (con su canción
@@ -287,6 +293,17 @@ class MotorDJ:
             if actual is None:
                 raise ValueError("La canción actual no está en el catálogo.")
 
+        aclaraciones = aclaraciones or {}
+        dominios = {
+            "actividad_principal": {"si", "no", "no_se"},
+            "actividad_baile": {"si", "no", "no_se"},
+            "publico_desea_bailar": {"si", "no", "no_se"},
+            "causa_sin_reaccion": {"rechaza_cancion", "menos_intensidad", "otra_causa", "no_se"},
+        }
+        if not isinstance(aclaraciones, dict) or any(
+            k not in dominios or v not in dominios[k] for k, v in aclaraciones.items()
+        ):
+            raise ValueError("Las aclaraciones del público no son válidas.")
         disparadas = self.disparar(contexto)
         if not disparadas:
             return {"reglas_disparadas": [], "conflictos": [], "recomendaciones": [],
@@ -298,9 +315,45 @@ class MotorDJ:
             genero_referencia = actual["genero"]
 
         traza = [{"paso": "reglas_disparadas", "reglas": [r["codigo"] for r in disparadas]}]
+        # Las reglas siguen disparándose por los antecedentes R01-R27. Las preguntas
+        # complementarias determinan si la acción condicional puede ejecutarse.
+        # Si falta confirmación, se CONSULTA: nunca se presupone la voluntad del público.
+        acciones_efectivas = {}
+        notas_condicionales = {}
+        for r in disparadas:
+            codigo = r["codigo"]
+            accion = r["accion"]
+            nota = None
+            if codigo == "R10" and aclaraciones.get("actividad_principal") != "si":
+                accion = "CRITERIO"
+                nota = "R10: confirmar si la actividad principal requiere aumentar la energía; no se aumenta automáticamente."
+            elif codigo == "R20":
+                if contexto.get("momento") in ("llegada", "cierre") or aclaraciones.get("actividad_baile") == "no":
+                    accion = "CRITERIO"
+                    nota = "R20: etapa tranquila o actividad no orientada al baile; mantener la energía apropiada."
+                elif aclaraciones.get("actividad_baile") != "si":
+                    accion = "CONSULTAR"
+                    nota = "R20: confirmar que la actividad es de baile y que el público desea participar antes de subir la energía."
+            elif codigo == "R21" and aclaraciones.get("publico_desea_bailar") != "si":
+                accion = "CONSULTAR"
+                nota = "R21: comprobar si el público está conversando, comiendo o descansando antes de cambiar la música."
+            elif codigo == "R25":
+                causa = aclaraciones.get("causa_sin_reaccion")
+                if causa == "rechaza_cancion":
+                    accion = "BUSCAR_OTRA"
+                elif causa == "menos_intensidad":
+                    accion = "BAJAR_ENERGIA"
+                else:
+                    accion = "CONSULTAR"
+                    nota = "R25: consultar la causa de la falta de reacción antes de cambiar la canción."
+            acciones_efectivas[codigo] = accion
+            if nota:
+                notas_condicionales[codigo] = nota
+            traza.append({"paso": "regla", "regla": codigo, "accion_documentada": r["accion"],
+                          "accion_aplicada": accion, "hechos": r["cumplidas"], "nota": nota})
         grupos = {}
         for r in disparadas:
-            grupos.setdefault(r["accion"], []).append(r)
+            grupos.setdefault(acciones_efectivas[r["codigo"]], []).append(r)
 
         notas_generales = {
             ACCION_CONSULTA: ["No se cambia la selección hasta consultar al público."],
@@ -311,7 +364,7 @@ class MotorDJ:
             codigos = [r["codigo"] for r in reglas]
             mensaje = " · ".join(r["conclusion"] for r in reglas)
             if accion in ACCIONES_SIN_CANCION:
-                notas = notas_generales.get(accion, [])
+                notas = list(notas_generales.get(accion, [])) + [notas_condicionales[r["codigo"]] for r in reglas if r["codigo"] in notas_condicionales]
                 recomendaciones.append({
                     "accion": accion, "reglas": codigos, "mensaje": mensaje, "filtro": None,
                     "cancion_sugerida": None, "canciones": [], "notas": notas,
@@ -349,14 +402,19 @@ class MotorDJ:
                 "sin_reglas": False,
                 "cancion_actual": actual,
                 "traza": traza,
+                "aclaraciones": aclaraciones,
                 "aviso": "Las reglas y los parámetros provienen del documento; requieren validación con DJs."}
 
 
 class ServicioSesion:
-    """Procesos transaccionales del DJ sobre la base de datos (CU01 a CU05).
+    """Procesos transaccionales del DJ sobre la base de datos (cuenta, CU01 a CU05 e historial).
 
     Cada método público es una transacción: si algo falla, no queda nada guardado a medias.
+    Todos reciben el id del usuario autenticado y solo dejan ver o cambiar lo que es suyo.
     """
+
+    CLAVE_MINIMA = 8
+    _HASH_VACIO = generate_password_hash("sin-usuario")   # iguala el tiempo cuando el correo no existe
 
     def __init__(self, conexion):
         self.conexion = conexion
@@ -376,11 +434,17 @@ class ServicioSesion:
             raise ErrorNoEncontrado("El usuario no existe.")
         return usuario
 
-    def _evento(self, evento_id):
+    def _evento(self, usuario_id, evento_id):
         evento = self.eventos.obtener(evento_id)
-        if evento is None:
+        if evento is None or evento["usuario_id"] != usuario_id:
             raise ErrorNoEncontrado("El evento no existe.")
         return evento
+
+    def _recomendacion(self, usuario_id, recomendacion_id):
+        rec = self.recomendaciones.obtener(recomendacion_id)
+        if rec is None or rec["usuario_id"] != usuario_id:
+            raise ErrorNoEncontrado("La recomendación no existe.")
+        return rec
 
     @staticmethod
     def _entero(valor, nombre, obligatorio=True):
@@ -393,19 +457,35 @@ class ServicioSesion:
         except (TypeError, ValueError):
             raise ValueError(f"{nombre} debe ser un número entero.")
 
-    # ------------------------------------------------------------------ usuario
-    def registrar_dj(self, nombre, correo):
-        """Devuelve el DJ con ese correo; si no existe, lo crea."""
+    # ------------------------------------------------------------------ cuenta
+    def registrar_usuario(self, nombre, correo, clave):
+        """Crea la cuenta del DJ. La contraseña se guarda solo como hash."""
         nombre, correo = str(nombre or "").strip(), str(correo or "").strip().lower()
         if not nombre or len(nombre) > 120:
             raise ValueError("El nombre es obligatorio (máximo 120 caracteres).")
         if not CORREO.match(correo) or len(correo) > 160:
             raise ValueError("El correo no es válido.")
+        if not isinstance(clave, str) or not self.CLAVE_MINIMA <= len(clave) <= 128:
+            raise ValueError(f"La contraseña debe tener entre {self.CLAVE_MINIMA} y 128 caracteres.")
         with self.conexion.transaccion():
-            existente = self.usuarios.por_correo(correo)
-            if existente:
-                return existente
-            return self.usuarios.obtener(self.usuarios.crear(nombre, correo, "DJ"))
+            try:
+                nuevo_id = self.usuarios.crear(nombre, correo, generate_password_hash(clave), "DJ")
+            except ErrorIntegridad:
+                raise ErrorConflicto("Ya existe una cuenta con ese correo.")
+            return self.usuarios.obtener(nuevo_id)
+
+    def autenticar(self, correo, clave):
+        """Devuelve el usuario si el correo y la contraseña coinciden."""
+        correo = str(correo or "").strip().lower()
+        fila = self.usuarios.clave_hash(correo) if correo else None
+        correcta = check_password_hash(fila["clave_hash"] if fila else self._HASH_VACIO, str(clave or ""))
+        if not fila or not correcta:
+            raise ErrorCredenciales("Correo o contraseña incorrectos.")
+        return self.usuarios.obtener(fila["id"])
+
+    def usuario(self, usuario_id):
+        """Datos de la cuenta, o None si ya no existe."""
+        return self.usuarios.obtener(usuario_id)
 
     # ------------------------------------------------------------------ CU01 catálogo
     def registrar_cancion(self, usuario_id, datos):
@@ -424,7 +504,7 @@ class ServicioSesion:
             self._usuario(usuario_id)
             try:
                 nuevo_id = self.canciones.crear(usuario_id, cancion)
-            except sqlite3.IntegrityError:
+            except ErrorIntegridad:
                 raise ErrorConflicto("Ya existe una canción con ese título y artista en el catálogo.")
             return self.canciones.obtener(nuevo_id)
 
@@ -439,7 +519,7 @@ class ServicioSesion:
             try:
                 if not self.canciones.eliminar(cancion_id, usuario_id):
                     raise ErrorNoEncontrado("La canción no existe en el catálogo.")
-            except sqlite3.IntegrityError:
+            except ErrorIntegridad:
                 raise ErrorConflicto("La canción aparece en el historial de un evento y no se puede eliminar.")
 
     # ------------------------------------------------------------------ CU02 evento
@@ -474,19 +554,20 @@ class ServicioSesion:
         self._usuario(usuario_id)
         return self.eventos.listar(usuario_id)
 
-    def finalizar_evento(self, evento_id):
+    def finalizar_evento(self, usuario_id, evento_id):
         """Cierra el evento: ya no admite contextos ni recomendaciones nuevas."""
         with self.conexion.transaccion():
-            self._evento(evento_id)
+            self._evento(usuario_id, evento_id)
             self.eventos.cambiar_estado(evento_id, "FINALIZADO")
             return self.eventos.obtener(evento_id)
 
     # ------------------------------------------------------------------ CU02 + CU03
-    def recomendar(self, evento_id, contexto, cancion_actual_id=None):
+    def recomendar(self, usuario_id, evento_id, contexto, cancion_actual_id=None, aclaraciones=None):
         """Registra el contexto, ejecuta el motor y guarda las recomendaciones.
 
-        El tipo de evento se toma del evento; el catálogo, de las canciones del DJ.
-        Todo ocurre en una transacción: contexto, recomendaciones, reglas y técnicas.
+        El tipo de evento se toma del evento; el catálogo, de las canciones del DJ. Si se indica
+        la canción que suena, el género se toma de ella para que no se contradigan.
+        Todo ocurre en una transacción: contexto, recomendaciones, reglas, técnicas y resultado.
         """
         inicio = time.perf_counter()
         if contexto is None:
@@ -494,16 +575,23 @@ class ServicioSesion:
         if not isinstance(contexto, dict):
             raise ValueError("El contexto debe ser un objeto.")
         with self.conexion.transaccion():
-            evento = self._evento(evento_id)
+            evento = self._evento(usuario_id, evento_id)
             if evento["estado"] == "FINALIZADO":
                 raise ErrorConflicto("El evento está finalizado.")
             hechos = {k: v for k, v in contexto.items() if k != "tipo_evento"}
             hechos["tipo_evento"] = evento["tipo_evento"]
+            completo = self.canciones.listar(usuario_id)
             catalogo = [{k: c[k] for k in ("id", "titulo", "artista", "genero", "bpm", "tonalidad_camelot",
                                            "energia", "duracion_seg", "formato", "conocida", "comercial")}
-                        for c in self.canciones.listar(evento["usuario_id"])]
+                        for c in completo]
             actual_id = self._entero(cancion_actual_id, "La canción actual", obligatorio=False)
-            resultado = self.motor.recomendar(hechos, catalogo, actual_id)
+            actual = next((c for c in completo if c["id"] == actual_id), None)
+            if actual is not None:
+                genero_cancion = self.motor.generos[actual["genero"]]
+                if hechos.get("genero_actual") not in (None, "", genero_cancion):
+                    raise ValueError("El género indicado no coincide con el de la canción que suena.")
+                hechos["genero_actual"] = genero_cancion
+            resultado = self.motor.recomendar(hechos, catalogo, actual_id, aclaraciones)
 
             ids_valores = {v: self.conocimiento.id_valor(v, hechos.get(v)) for v in VARIABLES_CONTEXTO}
             contexto_id = self.contextos.registrar(evento_id, ids_valores, actual_id)
@@ -517,15 +605,35 @@ class ServicioSesion:
                     tiempo_ms, rec["reglas"],
                     [t["transicion_regla_id"] for t in sugerida["transiciones"]] if sugerida else [])
                 rec["decision"] = None
-        resultado.update(evento_id=evento_id, contexto_id=contexto_id, tiempo_respuesta_ms=tiempo_ms)
+            resultado.update(evento_id=evento_id, contexto_id=contexto_id, tiempo_respuesta_ms=tiempo_ms,
+                             hechos={k: v for k, v in hechos.items() if v not in (None, "")})
+            self.contextos.guardar_resultado(contexto_id, resultado)
+        return resultado
+
+    # ------------------------------------------------------------------ historial de consultas
+    def consultas(self, usuario_id):
+        """Historial del DJ: una fila por consulta, de la más reciente a la más antigua."""
+        self._usuario(usuario_id)
+        return self.contextos.historial(usuario_id)
+
+    def consulta(self, usuario_id, contexto_id):
+        """Resultado completo de una consulta del historial, con las decisiones tomadas después."""
+        contexto = self.contextos.obtener(contexto_id)
+        if contexto is None:
+            raise ErrorNoEncontrado("La consulta no existe.")
+        evento = self._evento(usuario_id, contexto["evento_id"])
+        resultado = self.contextos.resultado(contexto_id)
+        if resultado is None:
+            raise ErrorNoEncontrado("La consulta no tiene resultado guardado.")
+        for rec in resultado["recomendaciones"]:
+            rec["decision"] = DecisionDAO.de(self.decisiones, rec["id"])
+        resultado.update(evento=evento, registrado_en=contexto["registrado_en"])
         return resultado
 
     # ------------------------------------------------------------------ CU04 explicación
-    def explicacion(self, recomendacion_id):
+    def explicacion(self, usuario_id, recomendacion_id):
         """Hechos, reglas, técnicas y decisión de una recomendación, leídos del historial."""
-        rec = self.recomendaciones.obtener(recomendacion_id)
-        if rec is None:
-            raise ErrorNoEncontrado("La recomendación no existe.")
+        rec = self._recomendacion(usuario_id, recomendacion_id)
         contexto = self.contextos.obtener(rec["contexto_id"])
         evento = self.eventos.obtener(rec["evento_id"])
         hechos = {"tipo_evento": evento["tipo_evento"]}
@@ -539,7 +647,7 @@ class ServicioSesion:
                 "explicacion": rec["explicacion"], "decision": rec["decision"]}
 
     # ------------------------------------------------------------------ CU05 decisiones
-    def decidir(self, recomendacion_id, accion, cancion_final_id=None, motivo=None):
+    def decidir(self, usuario_id, recomendacion_id, accion, cancion_final_id=None, motivo=None):
         """Registra la decisión del DJ. La recomendación original no se altera."""
         if accion not in DECISIONES:
             raise ValueError("La acción debe ser ACEPTADA, RECHAZADA o MODIFICADA.")
@@ -550,21 +658,50 @@ class ServicioSesion:
             raise ValueError("Solo una decisión MODIFICADA lleva canción final.")
         motivo = str(motivo).strip()[:1000] if motivo else None
         with self.conexion.transaccion():
-            rec = self.recomendaciones.obtener(recomendacion_id)
-            if rec is None:
-                raise ErrorNoEncontrado("La recomendación no existe.")
+            rec = self._recomendacion(usuario_id, recomendacion_id)
             if rec["decision"] is not None:
                 raise ErrorConflicto("La recomendación ya tiene una decisión registrada.")
             if final_id is not None:
                 final = self.canciones.obtener(final_id)
-                if final is None or final["usuario_id"] != rec["usuario_id"]:
+                if final is None or final["usuario_id"] != usuario_id:
                     raise ValueError("La canción final no está en el catálogo del DJ.")
                 if final_id == rec["cancion_id"]:
                     raise ValueError("La canción final es la misma sugerida: use ACEPTADA.")
             self.decisiones.registrar(recomendacion_id, accion, final_id, motivo)
             return self.recomendaciones.obtener(recomendacion_id)
 
-    def historial(self, evento_id):
+    def historial(self, usuario_id, evento_id):
         """Decisiones tomadas durante el evento."""
-        self._evento(evento_id)
+        self._evento(usuario_id, evento_id)
         return self.decisiones.historial(evento_id)
+
+    # ------------------------------------------------------------------ casos de ejemplo
+    def cargar_ejemplos(self, usuario_id):
+        """Crea el catálogo y los cinco casos de ejemplo, ejecutando el motor real en cada uno.
+
+        Los eventos llevan el prefijo «Ejemplo ·» para distinguirlos de los del DJ.
+        """
+        with self.conexion.transaccion():
+            self._usuario(usuario_id)
+            if any(e["nombre"].startswith(PREFIJO_EJEMPLO) for e in self.eventos.listar(usuario_id)):
+                raise ErrorConflicto("Los casos de ejemplo ya están cargados.")
+            for datos in CANCIONES_EJEMPLO:
+                try:
+                    self.registrar_cancion(usuario_id, datos)
+                except ErrorConflicto:
+                    pass                      # el DJ ya tenía esa canción
+            ids = {c["titulo"]: c["id"] for c in self.canciones.listar(usuario_id)}
+            creadas = []
+            for caso in CASOS_EJEMPLO:
+                evento = self.crear_evento(usuario_id, PREFIJO_EJEMPLO + caso["evento"], caso["tipo_evento"],
+                                           caso["duracion_min"], lugar=caso.get("lugar"))
+                resultado = self.recomendar(usuario_id, evento["id"], caso["contexto"], ids[caso["suena"]])
+                for rec in resultado["recomendaciones"]:
+                    decision = caso["decisiones"].get(rec["accion"])
+                    if decision:
+                        final = ids[decision["cancion_final"]] if decision.get("cancion_final") else None
+                        self.decidir(usuario_id, rec["id"], decision["accion"], final, decision.get("motivo"))
+                if caso.get("finalizado"):
+                    self.finalizar_evento(usuario_id, evento["id"])
+                creadas.append(resultado["contexto_id"])
+            return {"consultas": creadas, "canciones": len(ids)}

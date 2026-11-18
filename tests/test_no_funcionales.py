@@ -1,8 +1,6 @@
 """Pruebas de los requisitos no funcionales RNF01 a RNF06 y de las reglas alineadas (R18-R25)."""
 import ast
-import os
 import re
-import tempfile
 import threading
 import time
 import unittest
@@ -11,10 +9,20 @@ from pathlib import Path
 from app import app
 from datos import ConexionBD, ConocimientoDAO
 from negocio import MotorDJ, ServicioSesion
-from tests.base import CasoConBase, cancion
+from tests.base import URL, CasoConBase, borrar_esquema, cancion, esquema_nuevo
 
 RAIZ = Path(__file__).resolve().parent.parent
 GENEROS = ["Infantil", "Pop", "Urbano", "Salsa", "Merengue", "Electrónica", "Rock", "Popular", "Vallenato"]
+
+
+def cliente_con_sesion(caso):
+    """Cliente HTTP de prueba con la sesión del DJ del caso, sobre su esquema temporal."""
+    app.config.update(DATABASE_URL=URL, DJ_SCHEMA=caso.esquema)
+    caso.addCleanup(lambda: (app.config.pop("DATABASE_URL", None), app.config.pop("DJ_SCHEMA", None)))
+    cliente = app.test_client()
+    with cliente.session_transaction() as sesion:
+        sesion["usuario_id"] = caso.u
+    return cliente
 
 
 def catalogo_grande(n):
@@ -28,31 +36,26 @@ class RNF01TiempoDeRespuesta(CasoConBase):
 
     def test_RNF01_recomendar_con_500_canciones_tarda_menos_de_2_s(self):
         ids = self.cargar(*catalogo_grande(500))
-        contexto = {"momento": "momento_principal", "grupo_edad": "jovenes",
-                    "genero_actual": "salsa", "reaccion_publico": "baila_poco"}
+        contexto = {"momento": "momento_principal", "grupo_edad": "jovenes"}
         tiempos = []
         for _ in range(5):
             inicio = time.perf_counter()
-            r = self.s.recomendar(self.evento["id"], contexto, ids[0])
+            r = self.recomendar(contexto, ids[0])
             tiempos.append(time.perf_counter() - inicio)
             self.assertLess(r["tiempo_respuesta_ms"], self.LIMITE_S * 1000)
         self.assertLess(max(tiempos), self.LIMITE_S)
-        guardado = self.cx.db.execute("SELECT MAX(tiempo_respuesta_ms) FROM recomendacion").fetchone()[0]
+        guardado = self.cx.db.execute("SELECT MAX(tiempo_respuesta_ms) AS m FROM recomendacion").fetchone()["m"]
         self.assertLess(guardado, self.LIMITE_S * 1000)       # el tiempo queda registrado en la base
         print(f"\n  RNF01 · 500 canciones · peor de 5 ejecuciones: {max(tiempos) * 1000:.0f} ms", end="")
 
     def test_RNF01_peticion_web_completa_tarda_menos_de_2_s(self):
-        app.config["DJ_DB"] = self.ruta
-        try:
-            cliente = app.test_client()
-            ids = self.cargar(*catalogo_grande(500))
-            inicio = time.perf_counter()
-            r = cliente.post(f"/api/eventos/{self.evento['id']}/recomendar",
-                             json={"contexto": {"momento": "cierre"}, "cancion_actual_id": ids[0]})
-            transcurrido = time.perf_counter() - inicio
-        finally:
-            app.config.pop("DJ_DB", None)
-        self.assertEqual(r.status_code, 200)
+        cliente = cliente_con_sesion(self)
+        ids = self.cargar(*catalogo_grande(500))
+        inicio = time.perf_counter()
+        r = cliente.post(f"/api/eventos/{self.evento['id']}/consultas",
+                         json={"contexto": {"momento": "cierre"}, "cancion_actual_id": ids[0]})
+        transcurrido = time.perf_counter() - inicio
+        self.assertEqual(r.status_code, 201)
         self.assertLess(transcurrido, self.LIMITE_S)
         print(f"\n  RNF01 · petición HTTP con 500 canciones: {transcurrido * 1000:.0f} ms", end="")
 
@@ -72,14 +75,18 @@ class RNF02InterfazConPocaLuz(unittest.TestCase):
 
     def test_RNF02_contraste_del_tema_oscuro(self):
         css = (RAIZ / "static" / "styles.css").read_text(encoding="utf-8")
-        for color in ("#0b0d17", "#141827", "#1c2233", "#edf0fa", "#a9b1c7"):
+        for color in ("#0b0d17", "#141827", "#1c2233", "#edf0fa", "#ecedfa", "#a9b1c7", "#ffb8a6", "#3a2420",
+                      "#2a2447", "#c9a8ff", "#7fe0b8"):
             self.assertIn(color, css)                     # los colores medidos son los que usa la hoja
         pares = {"texto sobre fondo": ("#edf0fa", "#0b0d17"),
                  "texto sobre panel": ("#edf0fa", "#141827"),
                  "texto sobre tarjeta": ("#ecedfa", "#1c2233"),
                  "texto secundario sobre panel": ("#a9b1c7", "#141827"),
                  "texto secundario sobre tarjeta": ("#a9b1c7", "#1c2233"),
-                 "aviso de conflicto": ("#ffb8a6", "#3a2420")}
+                 "aviso de conflicto": ("#ffb8a6", "#3a2420"),
+                 "tarjeta elegida": ("#edf0fa", "#2a2447"),
+                 "rótulo de sección": ("#c9a8ff", "#0b0d17"),
+                 "decisión registrada": ("#7fe0b8", "#141827")}
         for nombre, (texto, fondo) in pares.items():
             self.assertGreaterEqual(self.contraste(texto, fondo), 4.5, nombre)
 
@@ -142,28 +149,24 @@ class RNF04Disponibilidad(CasoConBase):
 
     def setUp(self):
         super().setUp()
-        app.config["DJ_DB"] = self.ruta
-        self.cliente = app.test_client()
-
-    def tearDown(self):
-        app.config.pop("DJ_DB", None)
-        super().tearDown()
+        self.cliente = cliente_con_sesion(self)
 
     def test_RNF04_salud_comprueba_base_y_conocimiento(self):
         r = self.cliente.get("/api/salud")
         self.assertEqual((r.status_code, r.json["estado"], r.json["reglas_activas"]), (200, "ok", 27))
 
     def test_RNF04_salud_informa_503_si_la_base_no_abre(self):
-        app.config["DJ_DB"] = os.path.join(self.tmp.name, "no", "existe", "x.db")
+        app.config["DATABASE_URL"] = "postgresql://nadie:mala@127.0.0.1:1/no_existe"
         r = self.cliente.get("/api/salud")
         self.assertEqual((r.status_code, r.json["estado"]), (503, "error"))
+        self.assertNotIn("mala", r.get_data(as_text=True))          # no expone credenciales
 
     def test_RNF04_un_error_no_tumba_el_servicio(self):
-        self.assertEqual(self.cliente.post("/api/eventos/999/recomendar", json={}).status_code, 404)
-        self.assertEqual(self.cliente.post(f"/api/eventos/{self.evento['id']}/recomendar",
+        self.assertEqual(self.cliente.post("/api/eventos/999/consultas", json={}).status_code, 404)
+        self.assertEqual(self.cliente.post(f"/api/eventos/{self.evento['id']}/consultas",
                                            json={"contexto": {"momento": "inventado"}}).status_code, 400)
-        self.assertEqual(self.cliente.post("/api/usuarios", data="x", content_type="text/plain").status_code, 400)
-        self.assertEqual(self.cliente.post("/api/usuarios", data=b"x" * 600_000,
+        self.assertEqual(self.cliente.post("/api/login", data="x", content_type="text/plain").status_code, 400)
+        self.assertEqual(self.cliente.post("/api/login", data=b"x" * 600_000,
                                            content_type="application/json").status_code, 413)
         self.assertEqual(self.cliente.get("/api/salud").status_code, 200)
 
@@ -172,7 +175,9 @@ class RNF04Disponibilidad(CasoConBase):
 
         def trabajo(i):
             cliente = app.test_client()
-            r = cliente.post(f"/api/eventos/{self.evento['id']}/recomendar",
+            with cliente.session_transaction() as sesion:
+                sesion["usuario_id"] = self.u
+            r = cliente.post(f"/api/eventos/{self.evento['id']}/consultas",
                              json={"contexto": {"momento": "desarrollo"}})
             resultados.append(r.status_code)
 
@@ -181,14 +186,15 @@ class RNF04Disponibilidad(CasoConBase):
             h.start()
         for h in hilos:
             h.join()
-        self.assertEqual(resultados, [200] * 12)
+        self.assertEqual(resultados, [201] * 12)
         self.assertEqual(self.contar("contexto_evento"), 12)
         self.assertEqual(self.contar("recomendacion"), 12)
 
     def test_RNF04_base_nueva_se_inicializa_sola(self):
-        with tempfile.TemporaryDirectory() as carpeta:
-            app.config["DJ_DB"] = os.path.join(carpeta, "nueva.db")
-            self.assertEqual(self.cliente.get("/api/salud").json["reglas_activas"], 27)
+        nuevo = esquema_nuevo()
+        self.addCleanup(borrar_esquema, nuevo)
+        app.config["DJ_SCHEMA"] = nuevo
+        self.assertEqual(self.cliente.get("/api/salud").json["reglas_activas"], 27)
 
 
 class RNF05FormatosYMetadatos(CasoConBase):
@@ -196,20 +202,20 @@ class RNF05FormatosYMetadatos(CasoConBase):
 
     def test_RNF05_acepta_los_tres_formatos_y_rechaza_otros(self):
         for i, formato in enumerate(("MP3", "WAV", "FLAC", "flac")):
-            guardada = self.s.registrar_cancion(self.dj["id"], cancion(f"T{i}", 120, "8A", 5, formato=formato))
+            guardada = self.s.registrar_cancion(self.u, cancion(f"T{i}", 120, "8A", 5, formato=formato))
             self.assertEqual(guardada["formato"], formato.upper())
         for formato in ("OGG", "AAC", ""):
             with self.assertRaises(ValueError):
-                self.s.registrar_cancion(self.dj["id"], cancion("Otro", 120, "8A", 5, formato=formato))
+                self.s.registrar_cancion(self.u, cancion("Otro", 120, "8A", 5, formato=formato))
 
     def test_RNF05_conserva_metadatos_id3_y_ruta(self):
         id3 = {"TIT2": "Título", "TPE1": "Artista", "TBPM": "124", "TKEY": "8A", "TCON": "Salsa"}
-        guardada = self.s.registrar_cancion(self.dj["id"], cancion("Con ID3", 124, "8A", 5, metadatos_id3=id3,
+        guardada = self.s.registrar_cancion(self.u, cancion("Con ID3", 124, "8A", 5, metadatos_id3=id3,
                                                                     ruta_archivo="musica/con_id3.mp3"))
         self.assertEqual(guardada["metadatos_id3"], id3)
         self.assertEqual(guardada["ruta_archivo"], "musica/con_id3.mp3")
         with self.assertRaises(ValueError):
-            self.s.registrar_cancion(self.dj["id"], cancion("Mal ID3", 124, "8A", 5, metadatos_id3="texto"))
+            self.s.registrar_cancion(self.u, cancion("Mal ID3", 124, "8A", 5, metadatos_id3="texto"))
 
 
 class RNF06Documentacion(unittest.TestCase):
@@ -217,7 +223,7 @@ class RNF06Documentacion(unittest.TestCase):
 
     def test_RNF06_modulos_clases_y_funciones_publicas_tienen_docstring(self):
         faltan = []
-        for archivo in ("datos.py", "negocio.py", "app.py", "main.py"):
+        for archivo in ("datos.py", "negocio.py", "app.py", "main.py", "ejemplos.py"):
             arbol = ast.parse((RAIZ / archivo).read_text(encoding="utf-8"))
             if not ast.get_docstring(arbol):
                 faltan.append(archivo)
@@ -242,7 +248,7 @@ class ReglasAlineadas(CasoConBase):
     """R18 a R25: cada regla hace lo que dice su fila en la base de conocimiento."""
 
     def recomendar(self, genero, reaccion, actual=None):
-        return self.s.recomendar(self.evento["id"], {"genero_actual": genero, "reaccion_publico": reaccion}, actual)
+        return self.s.recomendar(self.u, self.evento["id"], {"genero_actual": genero, "reaccion_publico": reaccion}, actual)
 
     def accion(self, resultado, nombre):
         return next(x for x in resultado["recomendaciones"] if x["accion"] == nombre)
@@ -304,7 +310,7 @@ class ReglasAlineadas(CasoConBase):
             self.assertIn("R27", codigos)
             self.assertNotIn("R26", codigos)
         self.assertEqual(motor.disparar({"reaccion_publico": "se_retira"}), [])    # sin momento no se dispara
-        r = self.s.recomendar(self.evento["id"], {"momento": "desarrollo", "reaccion_publico": "se_retira"})
+        r = self.s.recomendar(self.u, self.evento["id"], {"momento": "desarrollo", "reaccion_publico": "se_retira"})
         consulta = self.accion(r, "CONSULTAR")
         self.assertEqual((consulta["reglas"], consulta["canciones"]), (["R27"], []))
 
@@ -322,7 +328,7 @@ class ReglasAlineadas(CasoConBase):
     def test_R25_busca_otra_cancion_compatible_y_pide_consultar_la_causa(self):
         actual, otra, lejos = self.cargar(cancion("Actual", 100, "8A", 5), cancion("Otra", 104, "9A", 5),
                                           cancion("Lejos", 100, "2B", 5))
-        rec = self.accion(self.recomendar("merengue", "sin_reaccion", actual), "BUSCAR_OTRA")
+        rec = self.accion(self.recomendar("salsa", "sin_reaccion", actual), "BUSCAR_OTRA")
         self.assertEqual((rec["reglas"], [int(c["id"]) for c in rec["canciones"]]), (["R25"], [otra]))
         self.assertTrue(any("Consultar la causa" in n for n in rec["notas"]))
 

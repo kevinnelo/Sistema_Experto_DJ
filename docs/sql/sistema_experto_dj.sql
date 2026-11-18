@@ -3,8 +3,7 @@
 -- SGBD: PostgreSQL 16 · Esquema: sistema_dj
 -- Ejecución: psql -U postgres -f sistema_experto_dj.sql
 --
--- Versión con las restricciones de integridad corregidas. Es el mismo modelo
--- que la aplicación ejecuta en SQLite (esquema.sql). Cambios frente a la
+-- Es el modelo que ejecuta la aplicación (esquema.sql). Cambios frente a la
 -- versión anterior del documento, marcados con [C1]..[C10]:
 --  [C1] regla.accion: acción que ejecuta el motor (antes se deducía del texto).
 --  [C2] Cada FK a valor_variable comprueba que el valor sea de SU variable
@@ -28,6 +27,8 @@
 -- [C12] cancion.conocida y cancion.comercial, usadas por R23 y R21.
 -- [C13] Conocimiento: valor se_retira con las reglas R26 y R27, y parámetro
 --       energia_diferencia_mismo_nivel (R19).
+-- [C14] usuario.clave_hash: inicio de sesión con contraseña (se guarda solo el hash).
+-- [C15] resultado_consulta: resultado completo de cada consulta para el historial.
 -- =====================================================================
 
 DROP SCHEMA IF EXISTS sistema_dj CASCADE;
@@ -110,6 +111,7 @@ CREATE TABLE usuario (
     nombre    VARCHAR(120) NOT NULL CHECK (btrim(nombre) <> ''),
     correo    VARCHAR(160) NOT NULL UNIQUE
               CHECK (correo LIKE '_%@_%._%' AND correo = lower(btrim(correo))),
+    clave_hash VARCHAR(255) NOT NULL CHECK (btrim(clave_hash) <> ''),          -- [C14] nunca la clave en claro
     rol       VARCHAR(25)  NOT NULL CHECK (rol IN ('DJ', 'ADMIN_CONOCIMIENTO')),
     creado_en TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
@@ -193,6 +195,12 @@ CREATE TABLE recomendacion_transicion (
     recomendacion_id    INTEGER NOT NULL REFERENCES recomendacion(id) ON DELETE CASCADE,
     transicion_regla_id INTEGER NOT NULL REFERENCES transicion_regla(id),
     PRIMARY KEY (recomendacion_id, transicion_regla_id)
+);
+
+-- Resultado completo de cada consulta, tal como lo vio el DJ (historial)       [C15]
+CREATE TABLE resultado_consulta (
+    contexto_id INTEGER PRIMARY KEY REFERENCES contexto_evento(id) ON DELETE CASCADE,
+    resultado   JSONB   NOT NULL CHECK (jsonb_typeof(resultado) = 'object')
 );
 
 -- Decisión del DJ (RF05): una por recomendación
@@ -326,6 +334,7 @@ END $$;
 CREATE TRIGGER contexto_inmutable      BEFORE UPDATE ON contexto_evento FOR EACH ROW EXECUTE FUNCTION trg_inmutable();
 CREATE TRIGGER recomendacion_inmutable BEFORE UPDATE ON recomendacion   FOR EACH ROW EXECUTE FUNCTION trg_inmutable();
 CREATE TRIGGER decision_inmutable      BEFORE UPDATE ON decision_dj     FOR EACH ROW EXECUTE FUNCTION trg_inmutable();
+CREATE TRIGGER resultado_inmutable     BEFORE UPDATE ON resultado_consulta FOR EACH ROW EXECUTE FUNCTION trg_inmutable();
 
 -- Una canción no cambia de dueño (protege los historiales que la citan)
 CREATE FUNCTION trg_cancion_dueno() RETURNS trigger LANGUAGE plpgsql AS $$

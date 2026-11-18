@@ -1,287 +1,346 @@
 -- =====================================================================
--- Sistema experto DJ · esquema único (SQLite)
--- Equivale al esquema sistema_dj del documento (PostgreSQL 16), adaptado
--- a SQLite y con las restricciones de integridad corregidas (ver README).
---   1. Base de conocimiento (BC)   2. Sistema transaccional (ST)
---   3. Disparadores de integridad  4. Vistas
+-- Sistema experto DJ · esquema de PostgreSQL 16 que aplica la aplicación.
+-- datos.py lo ejecuta la primera vez dentro del esquema configurado
+-- (DJ_SCHEMA, por defecto sistema_dj) y luego carga reglas.json.
+-- El script completo con datos está en docs/sql/sistema_experto_dj.sql.
 -- =====================================================================
-PRAGMA foreign_keys = ON;
 
--- ---------------------------------------------------------------- 1. BC
-CREATE TABLE IF NOT EXISTS variable (
-  id          INTEGER PRIMARY KEY,
-  codigo      TEXT NOT NULL UNIQUE,
-  descripcion TEXT NOT NULL);
+-- =====================================================================
+-- 1. BASE DE CONOCIMIENTO
+-- =====================================================================
 
-CREATE TABLE IF NOT EXISTS valor_variable (
-  id          INTEGER PRIMARY KEY,
-  variable_id INTEGER NOT NULL REFERENCES variable(id),
-  codigo      TEXT NOT NULL,
-  etiqueta    TEXT NOT NULL,
-  UNIQUE (variable_id, codigo),
-  UNIQUE (id, variable_id));            -- destino de la FK compuesta de condicion_regla
+CREATE TABLE variable (
+    id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    codigo      VARCHAR(30)  NOT NULL UNIQUE,
+    descripcion VARCHAR(200) NOT NULL
+);
 
-CREATE TABLE IF NOT EXISTS regla (
-  id          INTEGER PRIMARY KEY,
-  codigo      TEXT NOT NULL UNIQUE CHECK (codigo GLOB 'R[0-9][0-9]'),
-  nombre      TEXT NOT NULL,
-  conclusion  TEXT NOT NULL,
-  descripcion TEXT NOT NULL,
-  -- Qué hace el motor con la regla. El documento la deducía del texto de la conclusión.
-  accion      TEXT NOT NULL CHECK (accion IN (
-                'CRITERIO', 'MANTENER_GENERO', 'MISMO_GENERO', 'MANTENER_ENERGIA',
-                'SUBIR_ENERGIA', 'BAJAR_ENERGIA', 'BAJAR_O_COMERCIAL', 'CAMBIAR_GENERO', 'CONSULTAR',
-                'BUSCAR_OTRA')),
-  activa      INTEGER NOT NULL DEFAULT 1 CHECK (activa IN (0, 1)),
-  version     INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
-  creada_en   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
+CREATE TABLE valor_variable (
+    id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    variable_id INTEGER      NOT NULL REFERENCES variable(id),
+    codigo      VARCHAR(40)  NOT NULL,
+    etiqueta    VARCHAR(100) NOT NULL,
+    UNIQUE (variable_id, codigo),
+    UNIQUE (id, variable_id)            -- destino de la FK compuesta de condicion_regla
+);
 
--- Valores de la misma variable se combinan con O; variables distintas, con Y.
-CREATE TABLE IF NOT EXISTS condicion_regla (
-  regla_id    INTEGER NOT NULL REFERENCES regla(id) ON DELETE CASCADE,
-  variable_id INTEGER NOT NULL REFERENCES variable(id),
-  valor_id    INTEGER NOT NULL,
-  PRIMARY KEY (regla_id, valor_id),
-  FOREIGN KEY (valor_id, variable_id) REFERENCES valor_variable (id, variable_id));
+CREATE TABLE regla (
+    id          INTEGER      PRIMARY KEY,
+    codigo      CHAR(3)      NOT NULL UNIQUE CHECK (codigo ~ '^R[0-9]{2}$'),       -- R01 ... R27
+    nombre      VARCHAR(120) NOT NULL,
+    conclusion  VARCHAR(255) NOT NULL,
+    descripcion TEXT         NOT NULL,
+    accion      VARCHAR(20)  NOT NULL CHECK (accion IN (                       -- [C1]
+                    'CRITERIO', 'MANTENER_GENERO', 'MISMO_GENERO', 'MANTENER_ENERGIA',
+                    'SUBIR_ENERGIA', 'BAJAR_ENERGIA', 'BAJAR_O_COMERCIAL', 'CAMBIAR_GENERO',
+                    'CONSULTAR', 'BUSCAR_OTRA')),
+    activa      BOOLEAN      NOT NULL DEFAULT TRUE,
+    version     INTEGER      NOT NULL DEFAULT 1 CHECK (version > 0),
+    creada_en   TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
 
-CREATE TABLE IF NOT EXISTS parametro_experto (
-  clave       TEXT PRIMARY KEY,
-  valor       REAL NOT NULL CHECK (valor > 0),
-  unidad      TEXT,
-  descripcion TEXT NOT NULL);
+-- Valores de una misma variable son alternativos (O); variables distintas se combinan (Y).
+CREATE TABLE condicion_regla (
+    regla_id    INTEGER NOT NULL REFERENCES regla(id) ON DELETE CASCADE,
+    variable_id INTEGER NOT NULL REFERENCES variable(id),
+    valor_id    INTEGER NOT NULL,
+    PRIMARY KEY (regla_id, valor_id),
+    FOREIGN KEY (valor_id, variable_id) REFERENCES valor_variable (id, variable_id)
+);
 
-CREATE TABLE IF NOT EXISTS tecnica_transicion (
-  id          INTEGER PRIMARY KEY,
-  codigo      TEXT NOT NULL UNIQUE,
-  nombre      TEXT NOT NULL,
-  descripcion TEXT NOT NULL);
+CREATE TABLE parametro_experto (
+    clave       VARCHAR(60)  PRIMARY KEY,
+    valor       NUMERIC(8,2) NOT NULL CHECK (valor > 0),
+    unidad      VARCHAR(20),
+    descripcion VARCHAR(255) NOT NULL
+);
 
-CREATE TABLE IF NOT EXISTS transicion_regla (
-  id          INTEGER PRIMARY KEY,
-  caso        TEXT NOT NULL CHECK (caso IN (
-                'SIEMPRE', 'BPM_SIMILAR', 'BPM_TOLERABLE', 'BPM_DISTINTO', 'CAMBIO_CANCION',
-                'EFECTO_IMPACTO', 'CAMBIO_GENERO', 'ANUNCIO_MICROFONO')),
-  tecnica_id  INTEGER NOT NULL REFERENCES tecnica_transicion(id),
-  prioridad   INTEGER NOT NULL DEFAULT 1 CHECK (prioridad > 0),
-  UNIQUE (caso, tecnica_id));
+CREATE TABLE tecnica_transicion (
+    id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    codigo      VARCHAR(30) NOT NULL UNIQUE,
+    nombre      VARCHAR(80) NOT NULL,
+    descripcion TEXT        NOT NULL
+);
 
--- ---------------------------------------------------------------- 2. ST
-CREATE TABLE IF NOT EXISTS usuario (
-  id        INTEGER PRIMARY KEY,
-  nombre    TEXT NOT NULL CHECK (length(trim(nombre)) > 0),
-  correo    TEXT NOT NULL UNIQUE CHECK (correo LIKE '_%@_%._%' AND correo = lower(trim(correo))),
-  rol       TEXT NOT NULL CHECK (rol IN ('DJ', 'ADMIN_CONOCIMIENTO')),
-  creado_en TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
+CREATE TABLE transicion_regla (
+    id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    caso       VARCHAR(30) NOT NULL CHECK (caso IN (
+                   'SIEMPRE', 'BPM_SIMILAR', 'BPM_TOLERABLE', 'BPM_DISTINTO', 'CAMBIO_CANCION',  -- [C11]
+                   'EFECTO_IMPACTO', 'CAMBIO_GENERO', 'ANUNCIO_MICROFONO')),
+    tecnica_id INTEGER     NOT NULL REFERENCES tecnica_transicion(id),
+    prioridad  SMALLINT    NOT NULL DEFAULT 1 CHECK (prioridad > 0),
+    UNIQUE (caso, tecnica_id)
+);
 
--- valor_regla_id enlaza el género con el dominio de la variable genero_actual.
-CREATE TABLE IF NOT EXISTS genero_musical (
-  id             INTEGER PRIMARY KEY,
-  nombre         TEXT NOT NULL UNIQUE,
-  valor_regla_id INTEGER UNIQUE REFERENCES valor_variable(id));
+-- =====================================================================
+-- 2. SISTEMA TRANSACCIONAL
+-- =====================================================================
+
+CREATE TABLE usuario (
+    id        INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    nombre    VARCHAR(120) NOT NULL CHECK (btrim(nombre) <> ''),
+    correo    VARCHAR(160) NOT NULL UNIQUE
+              CHECK (correo LIKE '_%@_%._%' AND correo = lower(btrim(correo))),
+    clave_hash VARCHAR(255) NOT NULL CHECK (btrim(clave_hash) <> ''),          -- [C14] nunca la clave en claro
+    rol       VARCHAR(25)  NOT NULL CHECK (rol IN ('DJ', 'ADMIN_CONOCIMIENTO')),
+    creado_en TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE TABLE genero_musical (
+    id             INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    nombre         VARCHAR(60) NOT NULL UNIQUE,
+    valor_regla_id INTEGER UNIQUE REFERENCES valor_variable(id)                -- [C2]
+);
 
 -- Catálogo musical del DJ (RF01)
-CREATE TABLE IF NOT EXISTS cancion (
-  id                INTEGER PRIMARY KEY,
-  usuario_id        INTEGER NOT NULL REFERENCES usuario(id),
-  titulo            TEXT NOT NULL CHECK (length(trim(titulo)) BETWEEN 1 AND 200),
-  artista           TEXT NOT NULL CHECK (length(trim(artista)) BETWEEN 1 AND 200),
-  genero_id         INTEGER NOT NULL REFERENCES genero_musical(id),
-  bpm               REAL NOT NULL CHECK (bpm BETWEEN 40 AND 250),
-  tonalidad_camelot TEXT NOT NULL
-                    CHECK (tonalidad_camelot GLOB '[1-9][AB]' OR tonalidad_camelot GLOB '1[0-2][AB]'),
-  energia           INTEGER NOT NULL CHECK (energia BETWEEN 1 AND 10),
-  duracion_seg      INTEGER NOT NULL CHECK (duracion_seg > 0),
-  formato           TEXT NOT NULL CHECK (formato IN ('MP3', 'WAV', 'FLAC')),
-  conocida          INTEGER NOT NULL DEFAULT 0 CHECK (conocida IN (0, 1)),    -- muy reconocida por el público (R23)
-  comercial         INTEGER NOT NULL DEFAULT 0 CHECK (comercial IN (0, 1)),   -- éxito comercial o de radio (R21)
-  ruta_archivo      TEXT,
-  metadatos_id3     TEXT CHECK (metadatos_id3 IS NULL OR json_valid(metadatos_id3)),
-  UNIQUE (usuario_id, titulo, artista));
+CREATE TABLE cancion (
+    id                INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    usuario_id        INTEGER      NOT NULL REFERENCES usuario(id),
+    titulo            VARCHAR(200) NOT NULL CHECK (btrim(titulo) <> ''),
+    artista           VARCHAR(200) NOT NULL CHECK (btrim(artista) <> ''),
+    genero_id         INTEGER      NOT NULL REFERENCES genero_musical(id),
+    bpm               NUMERIC(5,2) NOT NULL CHECK (bpm BETWEEN 40 AND 250),
+    tonalidad_camelot VARCHAR(3)   NOT NULL CHECK (tonalidad_camelot ~ '^(1[0-2]|[1-9])[AB]$'),
+    energia           SMALLINT     NOT NULL CHECK (energia BETWEEN 1 AND 10),
+    duracion_seg      INTEGER      NOT NULL CHECK (duracion_seg > 0),
+    formato           VARCHAR(5)   NOT NULL CHECK (formato IN ('MP3', 'WAV', 'FLAC')),
+    conocida          BOOLEAN      NOT NULL DEFAULT FALSE,   -- [C12] el público la reconoce (R23)
+    comercial         BOOLEAN      NOT NULL DEFAULT FALSE,   -- [C12] éxito de radio o de listas (R21)
+    ruta_archivo      VARCHAR(500),
+    metadatos_id3     JSONB,
+    UNIQUE (usuario_id, titulo, artista)
+);
 
 -- Evento o fiesta (RF02)
-CREATE TABLE IF NOT EXISTS evento (
-  id              INTEGER PRIMARY KEY,
-  usuario_id      INTEGER NOT NULL REFERENCES usuario(id),
-  nombre          TEXT NOT NULL CHECK (length(trim(nombre)) > 0),
-  tipo_evento_id  INTEGER NOT NULL REFERENCES valor_variable(id),
-  lugar           TEXT,
-  aforo_estimado  INTEGER CHECK (aforo_estimado > 0),
-  inicio_previsto TEXT NOT NULL,
-  duracion_min    INTEGER NOT NULL CHECK (duracion_min > 0),
-  estado          TEXT NOT NULL DEFAULT 'PLANEADO'
-                  CHECK (estado IN ('PLANEADO', 'EN_CURSO', 'FINALIZADO')));
+CREATE TABLE evento (
+    id              INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    usuario_id      INTEGER      NOT NULL REFERENCES usuario(id),
+    nombre          VARCHAR(200) NOT NULL CHECK (btrim(nombre) <> ''),
+    tipo_evento_id  INTEGER      NOT NULL REFERENCES valor_variable(id),      -- [C2]
+    lugar           VARCHAR(200),
+    aforo_estimado  INTEGER      CHECK (aforo_estimado > 0),
+    inicio_previsto TIMESTAMPTZ  NOT NULL,
+    duracion_min    INTEGER      NOT NULL CHECK (duracion_min > 0),
+    estado          VARCHAR(15)  NOT NULL DEFAULT 'PLANEADO'
+                    CHECK (estado IN ('PLANEADO', 'EN_CURSO', 'FINALIZADO'))
+);
 
--- Fotografías del contexto: cada actualización es un registro nuevo (nunca se edita).
--- cancion_actual_id guarda la canción que sonaba: el motor la usa para la compatibilidad.
-CREATE TABLE IF NOT EXISTS contexto_evento (
-  id                  INTEGER PRIMARY KEY,
-  evento_id           INTEGER NOT NULL REFERENCES evento(id) ON DELETE CASCADE,
-  momento_id          INTEGER REFERENCES valor_variable(id),
-  grupo_edad_id       INTEGER REFERENCES valor_variable(id),
-  genero_actual_id    INTEGER REFERENCES valor_variable(id),
-  reaccion_publico_id INTEGER REFERENCES valor_variable(id),
-  cancion_actual_id   INTEGER REFERENCES cancion(id),
-  registrado_en       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  UNIQUE (id, evento_id));              -- destino de la FK compuesta de recomendacion
-CREATE INDEX IF NOT EXISTS ix_contexto_evento_fecha ON contexto_evento (evento_id, registrado_en);
+-- Fotografías del contexto: cada actualización es un registro nuevo
+CREATE TABLE contexto_evento (
+    id                  INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    evento_id           INTEGER     NOT NULL REFERENCES evento(id) ON DELETE CASCADE,
+    momento_id          INTEGER     REFERENCES valor_variable(id),            -- [C2]
+    grupo_edad_id       INTEGER     REFERENCES valor_variable(id),            -- [C2]
+    genero_actual_id    INTEGER     REFERENCES valor_variable(id),            -- [C2]
+    reaccion_publico_id INTEGER     REFERENCES valor_variable(id),            -- [C2]
+    cancion_actual_id   INTEGER     REFERENCES cancion(id),                   -- [C3]
+    registrado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (id, evento_id)              -- destino de la FK compuesta de recomendacion
+);
+CREATE INDEX ix_contexto_evento_fecha ON contexto_evento (evento_id, registrado_en);
 
--- Recomendaciones del motor (RF03). Una por cada acción inferida.
--- cancion_id es la canción sugerida; queda vacío en las recomendaciones generales
--- (criterio, consultar, cambiar género) o cuando ninguna canción cumple la regla.
--- La FK compuesta garantiza que el contexto pertenece al mismo evento.
-CREATE TABLE IF NOT EXISTS recomendacion (
-  id                  INTEGER PRIMARY KEY,
-  evento_id           INTEGER NOT NULL REFERENCES evento(id) ON DELETE CASCADE,
-  contexto_id         INTEGER NOT NULL,
-  cancion_id          INTEGER REFERENCES cancion(id),
-  explicacion         TEXT NOT NULL CHECK (length(trim(explicacion)) > 0),     -- RF04
-  generada_en         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  tiempo_respuesta_ms INTEGER CHECK (tiempo_respuesta_ms >= 0),               -- RNF01
-  FOREIGN KEY (contexto_id, evento_id) REFERENCES contexto_evento (id, evento_id));
-CREATE INDEX IF NOT EXISTS ix_recomendacion_evento ON recomendacion (evento_id);
+-- Recomendaciones del motor (RF03): una por cada acción inferida.
+-- cancion_id queda vacío en las recomendaciones generales.                     [C5]
+CREATE TABLE recomendacion (
+    id                  INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    evento_id           INTEGER     NOT NULL REFERENCES evento(id) ON DELETE CASCADE,
+    contexto_id         INTEGER     NOT NULL,
+    cancion_id          INTEGER     REFERENCES cancion(id),
+    explicacion         TEXT        NOT NULL CHECK (btrim(explicacion) <> ''), -- RF04
+    generada_en         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    tiempo_respuesta_ms INTEGER     CHECK (tiempo_respuesta_ms >= 0),          -- RNF01
+    FOREIGN KEY (contexto_id, evento_id) REFERENCES contexto_evento (id, evento_id)  -- [C4]
+);
+CREATE INDEX ix_recomendacion_evento ON recomendacion (evento_id);
 
 -- Reglas que sustentan cada recomendación (trazabilidad de RF04)
-CREATE TABLE IF NOT EXISTS recomendacion_regla (
-  recomendacion_id INTEGER NOT NULL REFERENCES recomendacion(id) ON DELETE CASCADE,
-  regla_id         INTEGER NOT NULL REFERENCES regla(id),
-  PRIMARY KEY (recomendacion_id, regla_id));
+CREATE TABLE recomendacion_regla (
+    recomendacion_id INTEGER NOT NULL REFERENCES recomendacion(id) ON DELETE CASCADE,
+    regla_id         INTEGER NOT NULL REFERENCES regla(id),
+    PRIMARY KEY (recomendacion_id, regla_id)
+);
 
--- Técnicas de transición de la canción sugerida. Sustituye a recomendacion.tecnica_id:
--- una transición combina varias técnicas (p. ej. sincronización + cross-fade + echo out).
-CREATE TABLE IF NOT EXISTS recomendacion_transicion (
-  recomendacion_id    INTEGER NOT NULL REFERENCES recomendacion(id) ON DELETE CASCADE,
-  transicion_regla_id INTEGER NOT NULL REFERENCES transicion_regla(id),
-  PRIMARY KEY (recomendacion_id, transicion_regla_id));
+-- Técnicas de transición de la canción sugerida                                [C6]
+CREATE TABLE recomendacion_transicion (
+    recomendacion_id    INTEGER NOT NULL REFERENCES recomendacion(id) ON DELETE CASCADE,
+    transicion_regla_id INTEGER NOT NULL REFERENCES transicion_regla(id),
+    PRIMARY KEY (recomendacion_id, transicion_regla_id)
+);
 
--- Decisión del DJ (RF05): una por recomendación; solo MODIFICADA lleva canción final.
-CREATE TABLE IF NOT EXISTS decision_dj (
-  id               INTEGER PRIMARY KEY,
-  recomendacion_id INTEGER NOT NULL UNIQUE REFERENCES recomendacion(id) ON DELETE CASCADE,
-  accion           TEXT NOT NULL CHECK (accion IN ('ACEPTADA', 'RECHAZADA', 'MODIFICADA')),
-  cancion_final_id INTEGER REFERENCES cancion(id),
-  motivo           TEXT,
-  decidida_en      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  CHECK ((accion = 'MODIFICADA') = (cancion_final_id IS NOT NULL)));
+-- Resultado completo de cada consulta, tal como lo vio el DJ (historial)       [C15]
+CREATE TABLE resultado_consulta (
+    contexto_id INTEGER PRIMARY KEY REFERENCES contexto_evento(id) ON DELETE CASCADE,
+    resultado   JSONB   NOT NULL CHECK (jsonb_typeof(resultado) = 'object')
+);
 
--- ---------------------------------------------------------------- 3. Disparadores
--- 3.1 Cada FK a valor_variable debe apuntar a un valor de SU variable.
-CREATE TRIGGER IF NOT EXISTS trg_genero_dominio_ins BEFORE INSERT ON genero_musical
-BEGIN
-  SELECT RAISE(ABORT, 'valor_regla_id no pertenece a la variable genero_actual')
-  WHERE NEW.valor_regla_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM valor_variable vv JOIN variable v ON v.id = vv.variable_id
-    WHERE vv.id = NEW.valor_regla_id AND v.codigo = 'genero_actual');
-END;
-CREATE TRIGGER IF NOT EXISTS trg_genero_dominio_upd BEFORE UPDATE OF valor_regla_id ON genero_musical
-BEGIN
-  SELECT RAISE(ABORT, 'valor_regla_id no pertenece a la variable genero_actual')
-  WHERE NEW.valor_regla_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM valor_variable vv JOIN variable v ON v.id = vv.variable_id
-    WHERE vv.id = NEW.valor_regla_id AND v.codigo = 'genero_actual');
-END;
-CREATE TRIGGER IF NOT EXISTS trg_evento_dominio_ins BEFORE INSERT ON evento
-BEGIN
-  SELECT RAISE(ABORT, 'tipo_evento_id no pertenece a la variable tipo_evento')
-  WHERE NOT EXISTS (
-    SELECT 1 FROM valor_variable vv JOIN variable v ON v.id = vv.variable_id
-    WHERE vv.id = NEW.tipo_evento_id AND v.codigo = 'tipo_evento');
-END;
-CREATE TRIGGER IF NOT EXISTS trg_evento_dominio_upd BEFORE UPDATE OF tipo_evento_id ON evento
-BEGIN
-  SELECT RAISE(ABORT, 'tipo_evento_id no pertenece a la variable tipo_evento')
-  WHERE NOT EXISTS (
-    SELECT 1 FROM valor_variable vv JOIN variable v ON v.id = vv.variable_id
-    WHERE vv.id = NEW.tipo_evento_id AND v.codigo = 'tipo_evento');
-END;
-CREATE TRIGGER IF NOT EXISTS trg_contexto_ins BEFORE INSERT ON contexto_evento
-BEGIN
-  SELECT RAISE(ABORT, 'momento_id no pertenece a la variable momento')
-  WHERE NEW.momento_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM valor_variable vv JOIN variable v ON v.id = vv.variable_id
-    WHERE vv.id = NEW.momento_id AND v.codigo = 'momento');
-  SELECT RAISE(ABORT, 'grupo_edad_id no pertenece a la variable grupo_edad')
-  WHERE NEW.grupo_edad_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM valor_variable vv JOIN variable v ON v.id = vv.variable_id
-    WHERE vv.id = NEW.grupo_edad_id AND v.codigo = 'grupo_edad');
-  SELECT RAISE(ABORT, 'genero_actual_id no pertenece a la variable genero_actual')
-  WHERE NEW.genero_actual_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM valor_variable vv JOIN variable v ON v.id = vv.variable_id
-    WHERE vv.id = NEW.genero_actual_id AND v.codigo = 'genero_actual');
-  SELECT RAISE(ABORT, 'reaccion_publico_id no pertenece a la variable reaccion_publico')
-  WHERE NEW.reaccion_publico_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM valor_variable vv JOIN variable v ON v.id = vv.variable_id
-    WHERE vv.id = NEW.reaccion_publico_id AND v.codigo = 'reaccion_publico');
-  -- 3.2 Un evento finalizado no admite más contextos.
-  SELECT RAISE(ABORT, 'el evento está finalizado')
-  WHERE (SELECT estado FROM evento WHERE id = NEW.evento_id) = 'FINALIZADO';
-  -- 3.3 La canción que suena debe ser del catálogo del DJ del evento.
-  SELECT RAISE(ABORT, 'la canción actual no es del catálogo del DJ del evento')
-  WHERE NEW.cancion_actual_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM cancion c JOIN evento e ON e.usuario_id = c.usuario_id
-    WHERE c.id = NEW.cancion_actual_id AND e.id = NEW.evento_id);
-END;
-CREATE TRIGGER IF NOT EXISTS trg_recomendacion_ins BEFORE INSERT ON recomendacion
-BEGIN
-  SELECT RAISE(ABORT, 'la canción sugerida no es del catálogo del DJ del evento')
-  WHERE NEW.cancion_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM cancion c JOIN evento e ON e.usuario_id = c.usuario_id
-    WHERE c.id = NEW.cancion_id AND e.id = NEW.evento_id);
-END;
-CREATE TRIGGER IF NOT EXISTS trg_transicion_ins BEFORE INSERT ON recomendacion_transicion
-BEGIN
-  SELECT RAISE(ABORT, 'solo una recomendación con canción puede llevar técnica de transición')
-  WHERE (SELECT cancion_id FROM recomendacion WHERE id = NEW.recomendacion_id) IS NULL;
-END;
-CREATE TRIGGER IF NOT EXISTS trg_decision_ins BEFORE INSERT ON decision_dj
-BEGIN
-  SELECT RAISE(ABORT, 'la canción final no es del catálogo del DJ del evento')
-  WHERE NEW.cancion_final_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM cancion c
-    JOIN recomendacion r ON r.id = NEW.recomendacion_id
-    JOIN evento e ON e.id = r.evento_id AND e.usuario_id = c.usuario_id
-    WHERE c.id = NEW.cancion_final_id);
-  SELECT RAISE(ABORT, 'la canción final debe ser distinta de la sugerida')
-  WHERE NEW.cancion_final_id IS NOT NULL
-    AND NEW.cancion_final_id = (SELECT cancion_id FROM recomendacion WHERE id = NEW.recomendacion_id);
-END;
--- 3.4 El historial no se reescribe (CU02 y CU05): contextos, recomendaciones y decisiones
---     son de solo inserción.
-CREATE TRIGGER IF NOT EXISTS trg_contexto_inmutable BEFORE UPDATE ON contexto_evento
-BEGIN SELECT RAISE(ABORT, 'un contexto registrado no se modifica: registre uno nuevo'); END;
-CREATE TRIGGER IF NOT EXISTS trg_recomendacion_inmutable BEFORE UPDATE ON recomendacion
-BEGIN SELECT RAISE(ABORT, 'una recomendación registrada no se modifica'); END;
-CREATE TRIGGER IF NOT EXISTS trg_decision_inmutable BEFORE UPDATE ON decision_dj
-BEGIN SELECT RAISE(ABORT, 'una decisión registrada no se modifica'); END;
--- 3.5 El estado del evento solo avanza: PLANEADO -> EN_CURSO -> FINALIZADO.
-CREATE TRIGGER IF NOT EXISTS trg_evento_estado BEFORE UPDATE OF estado ON evento
-WHEN (OLD.estado = 'FINALIZADO' AND NEW.estado <> 'FINALIZADO')
-  OR (OLD.estado = 'EN_CURSO' AND NEW.estado = 'PLANEADO')
-BEGIN SELECT RAISE(ABORT, 'el estado del evento no puede retroceder'); END;
--- 3.6 Una canción no cambia de dueño (protege los historiales que la citan).
-CREATE TRIGGER IF NOT EXISTS trg_cancion_dueno BEFORE UPDATE OF usuario_id ON cancion
-WHEN NEW.usuario_id <> OLD.usuario_id
-BEGIN SELECT RAISE(ABORT, 'una canción no puede cambiar de usuario'); END;
+-- Decisión del DJ (RF05): una por recomendación
+CREATE TABLE decision_dj (
+    id               INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    recomendacion_id INTEGER     NOT NULL UNIQUE REFERENCES recomendacion(id) ON DELETE CASCADE,
+    accion           VARCHAR(12) NOT NULL CHECK (accion IN ('ACEPTADA', 'RECHAZADA', 'MODIFICADA')),
+    cancion_final_id INTEGER     REFERENCES cancion(id),
+    motivo           TEXT,
+    decidida_en      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((accion = 'MODIFICADA') = (cancion_final_id IS NOT NULL))           -- [C8]
+);
 
--- ---------------------------------------------------------------- 4. Vistas
-CREATE VIEW IF NOT EXISTS v_reglas AS
+-- =====================================================================
+-- 3. DISPARADORES DE INTEGRIDAD
+-- =====================================================================
+
+-- [C2] ¿El valor pertenece a la variable indicada? (NULL se acepta: variable sin responder)
+CREATE FUNCTION valor_es_de(p_valor_id INTEGER, p_variable VARCHAR) RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+    SELECT p_valor_id IS NULL OR EXISTS (
+        SELECT 1 FROM sistema_dj.valor_variable vv
+        JOIN sistema_dj.variable v ON v.id = vv.variable_id
+        WHERE vv.id = p_valor_id AND v.codigo = p_variable);
+$$;
+
+-- [C7] ¿La canción es del catálogo del DJ dueño del evento?
+CREATE FUNCTION cancion_es_del_evento(p_cancion_id INTEGER, p_evento_id INTEGER) RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+    SELECT p_cancion_id IS NULL OR EXISTS (
+        SELECT 1 FROM sistema_dj.cancion c
+        JOIN sistema_dj.evento e ON e.usuario_id = c.usuario_id
+        WHERE c.id = p_cancion_id AND e.id = p_evento_id);
+$$;
+
+CREATE FUNCTION trg_genero() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT valor_es_de(NEW.valor_regla_id, 'genero_actual') THEN
+        RAISE EXCEPTION 'valor_regla_id no pertenece a la variable genero_actual'
+              USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER genero_dominio BEFORE INSERT OR UPDATE OF valor_regla_id ON genero_musical
+    FOR EACH ROW EXECUTE FUNCTION trg_genero();
+
+CREATE FUNCTION trg_evento() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT valor_es_de(NEW.tipo_evento_id, 'tipo_evento') THEN
+        RAISE EXCEPTION 'tipo_evento_id no pertenece a la variable tipo_evento'
+              USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF TG_OP = 'UPDATE' AND (                                                  -- [C10]
+           (OLD.estado = 'FINALIZADO' AND NEW.estado <> 'FINALIZADO')
+        OR (OLD.estado = 'EN_CURSO'   AND NEW.estado = 'PLANEADO')) THEN
+        RAISE EXCEPTION 'el estado del evento no puede retroceder'
+              USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER evento_integridad BEFORE INSERT OR UPDATE ON evento
+    FOR EACH ROW EXECUTE FUNCTION trg_evento();
+
+CREATE FUNCTION trg_contexto() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT valor_es_de(NEW.momento_id, 'momento')
+       OR NOT valor_es_de(NEW.grupo_edad_id, 'grupo_edad')
+       OR NOT valor_es_de(NEW.genero_actual_id, 'genero_actual')
+       OR NOT valor_es_de(NEW.reaccion_publico_id, 'reaccion_publico') THEN
+        RAISE EXCEPTION 'un valor del contexto no pertenece a su variable'
+              USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF (SELECT estado FROM evento WHERE id = NEW.evento_id) = 'FINALIZADO' THEN  -- [C10]
+        RAISE EXCEPTION 'el evento está finalizado'
+              USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF NOT cancion_es_del_evento(NEW.cancion_actual_id, NEW.evento_id) THEN     -- [C7]
+        RAISE EXCEPTION 'la canción actual no es del catálogo del DJ del evento'
+              USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER contexto_integridad BEFORE INSERT ON contexto_evento
+    FOR EACH ROW EXECUTE FUNCTION trg_contexto();
+
+CREATE FUNCTION trg_recomendacion() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT cancion_es_del_evento(NEW.cancion_id, NEW.evento_id) THEN            -- [C7]
+        RAISE EXCEPTION 'la canción sugerida no es del catálogo del DJ del evento'
+              USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER recomendacion_integridad BEFORE INSERT ON recomendacion
+    FOR EACH ROW EXECUTE FUNCTION trg_recomendacion();
+
+CREATE FUNCTION trg_transicion() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (SELECT cancion_id FROM recomendacion WHERE id = NEW.recomendacion_id) IS NULL THEN
+        RAISE EXCEPTION 'solo una recomendación con canción puede llevar técnica de transición'
+              USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER transicion_integridad BEFORE INSERT ON recomendacion_transicion
+    FOR EACH ROW EXECUTE FUNCTION trg_transicion();
+
+CREATE FUNCTION trg_decision() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE r recomendacion%ROWTYPE;
+BEGIN
+    SELECT * INTO r FROM recomendacion WHERE id = NEW.recomendacion_id;
+    IF NOT cancion_es_del_evento(NEW.cancion_final_id, r.evento_id) THEN        -- [C7]
+        RAISE EXCEPTION 'la canción final no es del catálogo del DJ del evento'
+              USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF NEW.cancion_final_id IS NOT NULL AND NEW.cancion_final_id = r.cancion_id THEN  -- [C8]
+        RAISE EXCEPTION 'la canción final debe ser distinta de la sugerida'
+              USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER decision_integridad BEFORE INSERT ON decision_dj
+    FOR EACH ROW EXECUTE FUNCTION trg_decision();
+
+-- [C9] El historial es de solo inserción
+CREATE FUNCTION trg_inmutable() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'los registros de % no se modifican', TG_TABLE_NAME
+          USING ERRCODE = 'integrity_constraint_violation';
+END $$;
+CREATE TRIGGER contexto_inmutable      BEFORE UPDATE ON contexto_evento FOR EACH ROW EXECUTE FUNCTION trg_inmutable();
+CREATE TRIGGER recomendacion_inmutable BEFORE UPDATE ON recomendacion   FOR EACH ROW EXECUTE FUNCTION trg_inmutable();
+CREATE TRIGGER decision_inmutable      BEFORE UPDATE ON decision_dj     FOR EACH ROW EXECUTE FUNCTION trg_inmutable();
+CREATE TRIGGER resultado_inmutable     BEFORE UPDATE ON resultado_consulta FOR EACH ROW EXECUTE FUNCTION trg_inmutable();
+
+-- Una canción no cambia de dueño (protege los historiales que la citan)
+CREATE FUNCTION trg_cancion_dueno() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.usuario_id <> OLD.usuario_id THEN
+        RAISE EXCEPTION 'una canción no puede cambiar de usuario'
+              USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER cancion_dueno BEFORE UPDATE OF usuario_id ON cancion
+    FOR EACH ROW EXECUTE FUNCTION trg_cancion_dueno();
+
+-- =====================================================================
+-- 4. VISTAS
+-- =====================================================================
+
+CREATE VIEW v_reglas AS
 SELECT r.codigo, r.nombre, v.codigo AS variable, vv.codigo AS valor, r.conclusion, r.accion
 FROM regla r
 JOIN condicion_regla c ON c.regla_id = r.id
 JOIN variable v        ON v.id = c.variable_id
 JOIN valor_variable vv ON vv.id = c.valor_id
-WHERE r.activa = 1;
+WHERE r.activa;
 
-CREATE VIEW IF NOT EXISTS v_historial_decisiones AS
-SELECT e.id            AS evento_id,
-       e.nombre        AS evento,
-       r.id            AS recomendacion_id,
+CREATE VIEW v_historial_decisiones AS
+SELECT e.id      AS evento_id,
+       e.nombre  AS evento,
+       r.id      AS recomendacion_id,
        r.generada_en,
-       (SELECT group_concat(codigo, ', ') FROM (
-          SELECT g.codigo FROM recomendacion_regla rr JOIN regla g ON g.id = rr.regla_id
-          WHERE rr.recomendacion_id = r.id ORDER BY g.codigo)) AS reglas,
-       c.titulo        AS cancion_sugerida,
+       (SELECT string_agg(g.codigo, ', ' ORDER BY g.codigo)
+          FROM recomendacion_regla rr JOIN regla g ON g.id = rr.regla_id
+         WHERE rr.recomendacion_id = r.id) AS reglas,
+       c.titulo  AS cancion_sugerida,
        d.accion,
-       cf.titulo       AS cancion_final,
+       cf.titulo AS cancion_final,
        d.motivo,
        d.decidida_en
 FROM decision_dj d
